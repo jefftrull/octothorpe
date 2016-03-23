@@ -10,6 +10,7 @@
  */
 
 #include <iostream>
+#include <experimental/optional>
 
 #include "clang/AST/AST.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
@@ -27,40 +28,83 @@ static llvm::cl::OptionCategory ToolingSampleCategory("Ifdef converter");
 
 struct MyCallbacks : clang::PPCallbacks
 {
-    MyCallbacks(clang::LangOptions lopt, clang::SourceManager & sm) : lopt_(lopt), sm_(sm) {}
+    MyCallbacks(clang::LangOptions lopt,
+                clang::SourceManager & sm,
+                std::string mname,
+                bool sense)
+        : lopt_(lopt), sm_(sm), mname_(mname), sense_(sense) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
                clang::MacroDefinition const& md) override {
-        std::cerr << "I saw an ifdef: " << tok.getIdentifierInfo()->getName().str() << "\n";
-        std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
         // check for our target macro and sense
-        // if ((tok.getIdentifierInfo()->getName().str() == tgt_macro_) && sense_) {
+        if (tok.getIdentifierInfo()->getName().str() == mname_) {
+            cond_starts_.emplace(loc, true);
+            else_loc_ = std::experimental::nullopt;
+            if (sense_) {
+                std::cerr << "I saw an ifdef: " << tok.getIdentifierInfo()->getName().str() << "\n";
+                std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
+            }
+        }
     }
 
     void Ifndef(clang::SourceLocation loc,
                 clang::Token const& tok,
                 clang::MacroDefinition const& md) override {
-        std::cerr << "I saw an ifndef: " << tok.getIdentifierInfo()->getName().str() << "\n";
-        std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
+        if (tok.getIdentifierInfo()->getName().str() == mname_) {
+            cond_starts_.emplace(loc, false);
+            else_loc_ = std::experimental::nullopt;
+            if (!sense_) {
+                std::cerr << "I saw an ifndef: " << tok.getIdentifierInfo()->getName().str() << "\n";
+                std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
+            }
+        }
     }
 
     // else and endif are reported as long as their corresponding if is not *within* a skipped region
 
     void Else(clang::SourceLocation elseloc,
               clang::SourceLocation ifloc) override {
-        std::cerr << "I found an else at line ";
-        std::cerr << sm_.getExpansionLineNumber(elseloc) << " column " << sm_.getExpansionColumnNumber(elseloc);
-        std::cerr << " related to an if at line ";
-        std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
+        // see if this else is related to an ifdef/ifndef for our target macro
+        auto start_it = cond_starts_.find(ifloc);
+        if (start_it != cond_starts_.end()) {
+            std::cerr << "I found an else at line ";
+            std::cerr << sm_.getExpansionLineNumber(elseloc) << " column " << sm_.getExpansionColumnNumber(elseloc);
+            if (start_it->second == sense_) {
+                // this is the *end* of our range of interest
+                std::cerr << " which ends the range of interest that began at line ";
+                std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
+            } else {
+                // this is the *start* of our range, because the sense of the original was inverted
+                std::cerr << " which begins a range of interest\n";
+            }
+            else_loc_ = elseloc;
+        }
     }        
 
     void Endif(clang::SourceLocation endifloc,
                clang::SourceLocation ifloc) override {
-        std::cerr << "I found an endif at line ";
-        std::cerr << sm_.getExpansionLineNumber(endifloc) << " column " << sm_.getExpansionColumnNumber(endifloc);
-        std::cerr << " that terminates an if at line ";
-        std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
+        auto start_it = cond_starts_.find(ifloc);
+        if (start_it != cond_starts_.end()) {
+            std::cerr << "I found an endif at line ";
+            std::cerr << sm_.getExpansionLineNumber(endifloc) << " column " << sm_.getExpansionColumnNumber(endifloc);
+            // this endif may terminate:
+            // - an if of the desired sense without an else (range is ifloc through here)
+            // - an if of the inverted sense with an else (range is else through here)
+            // - an if of desired sense with else (we found the range when we found the else)
+            // - an if inverted sense without an else - output empty range
+            if (((start_it->second != sense_) && else_loc_) ||
+                ((start_it->second == sense_) && !else_loc_)) {
+                std::cerr << " that ends the range of interest that began at line ";
+                if (else_loc_) {
+                    std::cerr << sm_.getExpansionLineNumber(*else_loc_) << " column " << sm_.getExpansionColumnNumber(*else_loc_) << "\n";
+                } else {
+                    std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
+                }                    
+            } else if (start_it->second != sense_) {
+                std::cerr << " which marks an empty range (inverted sense, no else)\n";
+            }
+        }
     }        
 
     // we won't see the tokens inside here except for the final else/endif
@@ -72,8 +116,12 @@ struct MyCallbacks : clang::PPCallbacks
     }
 
 private:
-    clang::LangOptions lopt_;
+    clang::LangOptions    lopt_;
     clang::SourceManager& sm_;
+    std::string           mname_;
+    bool                  sense_;     // true if we want to capture text when mname is defined
+    std::map<clang::SourceLocation, bool> cond_starts_;
+    std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
 
 };
 
@@ -82,8 +130,7 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
     ~PPCallbacksInstaller() {}
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         std::cerr << "begin processing " << fn.str() << "\n";
-        ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager()));
-
+        ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(), "FOO", true));
         return true;
     }
 };

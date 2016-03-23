@@ -78,7 +78,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
 
 add_executable( c2p conditional_to_policy.cpp )
 set_target_properties( c2p PROPERTIES
-  COMPILE_FLAGS "${LLVM_CXXFLAGS}"
+  COMPILE_FLAGS "${LLVM_CXXFLAGS} -std=c++14"
   LINK_FLAGS "${LLVM_LDFLAGS}"
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
