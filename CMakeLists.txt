@@ -82,4 +82,3 @@ set_target_properties( c2p PROPERTIES
   LINK_FLAGS "${LLVM_LDFLAGS}"
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
-target_link_libraries( c2p ${CLANG_AST_LIBS} )
