@@ -26,13 +26,30 @@
 
 static llvm::cl::OptionCategory ToolingSampleCategory("Ifdef converter");
 
+void print_source_range(std::ostream& os, clang::SourceManager* sm,
+                        clang::LangOptions lopt, clang::SourceRange range) {
+    auto beg = range.getBegin();
+    auto end = range.getEnd();
+    os << "From line " << sm->getExpansionLineNumber(beg);
+    os << " column " << sm->getExpansionColumnNumber(beg);
+    os << " to line " << sm->getExpansionLineNumber(end);
+    os << " column " << sm->getExpansionColumnNumber(end) << ":\n";
+    os << "===========\n#";
+    clang::SourceLocation true_end =
+        clang::Lexer::getLocForEndOfToken(end, 0, *sm, lopt);
+    os << std::string(sm->getCharacterData(beg),
+                             sm->getCharacterData(true_end) - sm->getCharacterData(beg));
+    os << "\n===========\n";
+}
+
 struct MyCallbacks : clang::PPCallbacks
 {
     MyCallbacks(clang::LangOptions lopt,
                 clang::SourceManager & sm,
                 std::string mname,
-                bool sense)
-        : lopt_(lopt), sm_(sm), mname_(mname), sense_(sense) {}
+                bool sense,
+                std::vector<clang::SourceRange>& cond_ranges)
+        : lopt_(lopt), sm_(sm), mname_(mname), sense_(sense), cond_ranges_(cond_ranges) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
@@ -41,10 +58,6 @@ struct MyCallbacks : clang::PPCallbacks
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
             cond_starts_.emplace(loc, true);
             else_loc_ = std::experimental::nullopt;
-            if (sense_) {
-                std::cerr << "I saw an ifdef: " << tok.getIdentifierInfo()->getName().str() << "\n";
-                std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
-            }
         }
     }
 
@@ -54,10 +67,6 @@ struct MyCallbacks : clang::PPCallbacks
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
             cond_starts_.emplace(loc, false);
             else_loc_ = std::experimental::nullopt;
-            if (!sense_) {
-                std::cerr << "I saw an ifndef: " << tok.getIdentifierInfo()->getName().str() << "\n";
-                std::cerr << "at line " << sm_.getExpansionLineNumber(loc) << " column " << sm_.getExpansionColumnNumber(loc) << "\n";
-            }
         }
     }
 
@@ -68,15 +77,9 @@ struct MyCallbacks : clang::PPCallbacks
         // see if this else is related to an ifdef/ifndef for our target macro
         auto start_it = cond_starts_.find(ifloc);
         if (start_it != cond_starts_.end()) {
-            std::cerr << "I found an else at line ";
-            std::cerr << sm_.getExpansionLineNumber(elseloc) << " column " << sm_.getExpansionColumnNumber(elseloc);
             if (start_it->second == sense_) {
                 // this is the *end* of our range of interest
-                std::cerr << " which ends the range of interest that began at line ";
-                std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
-            } else {
-                // this is the *start* of our range, because the sense of the original was inverted
-                std::cerr << " which begins a range of interest\n";
+                cond_ranges_.emplace_back(ifloc, elseloc);
             }
             else_loc_ = elseloc;
         }
@@ -84,36 +87,23 @@ struct MyCallbacks : clang::PPCallbacks
 
     void Endif(clang::SourceLocation endifloc,
                clang::SourceLocation ifloc) override {
+        // is this endif related to an ifdef/ifndef of interest?
         auto start_it = cond_starts_.find(ifloc);
         if (start_it != cond_starts_.end()) {
-            std::cerr << "I found an endif at line ";
-            std::cerr << sm_.getExpansionLineNumber(endifloc) << " column " << sm_.getExpansionColumnNumber(endifloc);
             // this endif may terminate:
             // - an if of the desired sense without an else (range is ifloc through here)
+            if ((start_it->second == sense_) && !else_loc_) {
+                cond_ranges_.emplace_back(ifloc, endifloc);
             // - an if of the inverted sense with an else (range is else through here)
-            // - an if of desired sense with else (we found the range when we found the else)
-            // - an if inverted sense without an else - output empty range
-            if (((start_it->second != sense_) && else_loc_) ||
-                ((start_it->second == sense_) && !else_loc_)) {
-                std::cerr << " that ends the range of interest that began at line ";
-                if (else_loc_) {
-                    std::cerr << sm_.getExpansionLineNumber(*else_loc_) << " column " << sm_.getExpansionColumnNumber(*else_loc_) << "\n";
-                } else {
-                    std::cerr << sm_.getExpansionLineNumber(ifloc) << " column " << sm_.getExpansionColumnNumber(ifloc) << "\n";
-                }                    
+            } else if ((start_it->second != sense_) && else_loc_) {
+                cond_ranges_.emplace_back(*else_loc_, endifloc);
+            // - an if of inverted sense without an else - empty range
             } else if (start_it->second != sense_) {
-                std::cerr << " which marks an empty range (inverted sense, no else)\n";
+                cond_ranges_.emplace_back(endifloc, endifloc);
             }
+            // - an if of desired sense with else (we found the range when we found the else)
         }
     }        
-
-    // we won't see the tokens inside here except for the final else/endif
-    void SourceRangeSkipped(clang::SourceRange rng) override {
-        std::cerr << "I skipped a source range, from line ";
-        std::cerr << sm_.getExpansionLineNumber(rng.getBegin()) << " column " << sm_.getExpansionColumnNumber(rng.getBegin());
-        std::cerr << " to line ";
-        std::cerr << sm_.getExpansionLineNumber(rng.getEnd()) << " column " << sm_.getExpansionColumnNumber(rng.getEnd()) << "\n";
-    }
 
 private:
     clang::LangOptions    lopt_;
@@ -122,17 +112,39 @@ private:
     bool                  sense_;     // true if we want to capture text when mname is defined
     std::map<clang::SourceLocation, bool> cond_starts_;
     std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
+    std::vector<clang::SourceRange>& cond_ranges_;
 
 };
 
 struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 {
+    PPCallbacksInstaller(std::string mname, bool sense, std::vector<clang::SourceRange>& cond_ranges)
+        : mname_(mname), sense_(sense), cond_ranges_(cond_ranges), ci_(nullptr) {}
+
     ~PPCallbacksInstaller() {}
+
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
+        ci_ = &ci;
         std::cerr << "begin processing " << fn.str() << "\n";
-        ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(), "FOO", true));
+        ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(), mname_, sense_, cond_ranges_));
         return true;
     }
+
+    void handleEndSource() override {
+        std::cout << "Source ranges present only when " << mname_ << " is ";
+        std::cout << (sense_ ? "defined" : "not defined") << ":\n";
+                      
+        for (auto const & range : cond_ranges_) {
+            print_source_range(std::cout, &ci_->getSourceManager(), ci_->getLangOpts(), range);
+        }
+    }            
+
+private:
+    std::string mname_;
+    bool        sense_;
+    std::vector<clang::SourceRange>& cond_ranges_;
+    clang::CompilerInstance* ci_;
+            
 };
 
 int main(int argc, char const **argv) {
@@ -144,7 +156,8 @@ int main(int argc, char const **argv) {
     RefactoringTool     tool(opt.getCompilations(), opt.getSourcePathList());
 
     MatchFinder         finder;
-    PPCallbacksInstaller ppci;
+    std::vector<clang::SourceRange> cond_true_ranges;
+    PPCallbacksInstaller ppci("FOO", true, cond_true_ranges);
     if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
         return result;
     }
