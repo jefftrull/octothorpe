@@ -133,6 +133,8 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         ci_ = &ci;
         std::cerr << "begin processing " << fn.str() << "\n";
+        // at this point the preprocessor has been initialized, so we cannot add definitions
+        // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(), mname_, sense_, cond_ranges_));
         return true;
     }
@@ -245,17 +247,30 @@ int main(int argc, char const **argv) {
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
 
-    CommonOptionsParser opt(argc, argv, ToolingSampleCategory);
-    RefactoringTool     tool(opt.getCompilations(), opt.getSourcePathList());
+    /*
+     * Prepare to evaluate macro defined condition
+     */
 
-    MatchFinder         finder;
-    std::vector<clang::SourceRange> cond_true_ranges;
-    PPCallbacksInstaller ppci("FOO", true, cond_true_ranges);
+    // add -DFOO to a copy of the command line
+    std::vector<char const*> args(argv, argv + argc);
+    args.push_back("--");
+    args.push_back("-DFOO");
+    int args_c = args.size();
+    CommonOptionsParser opt_defined(args_c, args.data(), ToolingSampleCategory);
 
-    // set finders according to the preprocessing results
-    MatcherInstaller      set_up_source_ranges(finder, cond_true_ranges);
-    finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
-    if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
+    RefactoringTool     tool_defined(opt_defined.getCompilations(), opt_defined.getSourcePathList());
+
+    // prepare to store source ranges for FOO defined case
+    std::vector<clang::SourceRange> cond_defined_ranges;
+    PPCallbacksInstaller            ppci_defined("FOO", true, cond_defined_ranges);
+
+    // use test hook to set up range matchers after preprocessing but before AST visitation
+    MatchFinder           finder_defined;
+    MatcherInstaller      set_up_source_ranges(finder_defined, cond_defined_ranges);
+    finder_defined.registerTestCallbackAfterParsing(&set_up_source_ranges);
+
+    // run the tool for the defined case
+    if (int result = tool_defined.run(newFrontendActionFactory(&finder_defined, &ppci_defined).get())) {
         return result;
     }
 
