@@ -26,19 +26,26 @@
 
 static llvm::cl::OptionCategory ToolingSampleCategory("Ifdef converter");
 
-void print_source_range(std::ostream& os, clang::SourceManager* sm,
+void print_source_range(std::ostream& os, clang::SourceManager const* sm,
                         clang::LangOptions lopt, clang::SourceRange range) {
+    auto beg = range.getBegin();
+    auto end = range.getEnd();
+    clang::SourceLocation true_end =
+        clang::Lexer::getLocForEndOfToken(end, 0, *sm, lopt);
+    os << std::string(sm->getCharacterData(beg),
+                      sm->getCharacterData(true_end) - sm->getCharacterData(beg));
+}
+
+void print_decorated_source_range(std::ostream& os, clang::SourceManager const* sm,
+                                  clang::LangOptions lopt, clang::SourceRange range) {
     auto beg = range.getBegin();
     auto end = range.getEnd();
     os << "From line " << sm->getExpansionLineNumber(beg);
     os << " column " << sm->getExpansionColumnNumber(beg);
     os << " to line " << sm->getExpansionLineNumber(end);
     os << " column " << sm->getExpansionColumnNumber(end) << ":\n";
-    os << "===========\n#";
-    clang::SourceLocation true_end =
-        clang::Lexer::getLocForEndOfToken(end, 0, *sm, lopt);
-    os << std::string(sm->getCharacterData(beg),
-                             sm->getCharacterData(true_end) - sm->getCharacterData(beg));
+    os << "===========\n";
+    print_source_range(os, sm, lopt, range);
     os << "\n===========\n";
 }
 
@@ -130,21 +137,107 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         return true;
     }
 
-    void handleEndSource() override {
-        std::cout << "Source ranges present only when " << mname_ << " is ";
-        std::cout << (sense_ ? "defined" : "not defined") << ":\n";
-                      
-        for (auto const & range : cond_ranges_) {
-            print_source_range(std::cout, &ci_->getSourceManager(), ci_->getLangOpts(), range);
-        }
-    }            
-
 private:
     std::string mname_;
     bool        sense_;
     std::vector<clang::SourceRange>& cond_ranges_;
     clang::CompilerInstance* ci_;
             
+};
+
+namespace custom_matchers {
+
+// define an AST matcher for a source location range
+// it will match all statements whose associated start/end locations are within the range
+AST_MATCHER_P(clang::Stmt,                statementInRange,
+              clang::SourceRange,         range) {
+    // true if the statement node is entirely within the supplied range
+    // i.e. they can be coterminous but the statement cannot start before or end after
+    clang::SourceManager const& sm = Finder->getASTContext().getSourceManager();
+    return !sm.isBeforeInTranslationUnit(Node.getLocStart(), range.getBegin()) &&
+        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getLocEnd());
+}
+
+AST_MATCHER_P(clang::Decl,                declInRange,
+              clang::SourceRange,         range) {
+    clang::SourceManager const& sm = Finder->getASTContext().getSourceManager();
+    return !sm.isBeforeInTranslationUnit(Node.getLocStart(), range.getBegin()) &&
+        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getLocEnd());
+}
+
+// BOZO can we do the above polymorphically in the node type (decl/stmt)?
+
+}
+
+// action for when we find a statement
+struct StmtHandler : clang::ast_matchers::MatchFinder::MatchCallback {
+
+    virtual void run(clang::ast_matchers::MatchFinder::MatchResult const& result) {
+        std::cerr << "found a statement only present when FOO is defined:\n";
+        clang::Stmt const * stmt = result.Nodes.getNodeAs<clang::Stmt>("stmt");
+        auto const & sm = result.Context->getSourceManager();
+        auto lopt = result.Context->getLangOpts();
+        print_source_range(std::cerr, &sm, lopt, stmt->getSourceRange());
+        std::cerr << ";\n";
+    }
+};
+            
+// action for when we find a declaration
+struct DeclHandler : clang::ast_matchers::MatchFinder::MatchCallback {
+
+    virtual void run(clang::ast_matchers::MatchFinder::MatchResult const& result) {
+        std::cerr << "found a declaration only present when FOO is defined:\n";
+        clang::Decl const * decl = result.Nodes.getNodeAs<clang::Decl>("decl");
+        auto const & sm = result.Context->getSourceManager();
+        auto lopt = result.Context->getLangOpts();
+        print_source_range(std::cerr, &sm, lopt, decl->getSourceRange());
+        std::cerr << ";\n";
+    }
+};
+            
+// Test hook to install matchers
+// We don't know which source ranges we want to find until preprocessing completes,
+// which means we have to set up matchers after parsing begins but before AST traversal
+// it's a little weird to use this test hook but it's exactly what we need
+struct MatcherInstaller : clang::ast_matchers::MatchFinder::ParsingDoneTestCallback {
+
+    MatcherInstaller(clang::ast_matchers::MatchFinder& finder,
+                     std::vector<clang::SourceRange> const& ranges)
+        : finder_(finder), ranges_(ranges) {}
+
+    virtual void run() override {
+        // install matchers for the given ranges into the finder
+        using namespace clang::ast_matchers;
+        using namespace custom_matchers;
+        for( auto const& range : ranges_ ) {
+            // statement matcher
+            finder_.addMatcher(
+                stmt(                          // statement requirements:
+                    isExpansionInMainFile(),   // not in an included header
+                    statementInRange(range),   // within target range
+                    hasParent(
+                        compoundStmt()),       // part of compound statement
+                    unless(declStmt(           // not a type declaration
+                               hasSingleDecl(
+                                   anyOf(typedefDecl(), usingDecl())))),
+                    stmt().bind("stmt")),       // remember it
+                &stmt_handler_);
+            // typedef matcher
+            finder_.addMatcher(
+                decl(
+                    isExpansionInMainFile(),
+                    declInRange(range),
+                    anyOf(typedefDecl(), usingDecl()),
+                    decl().bind("decl")),
+                &decl_handler_);
+        }
+    }
+
+private:
+    clang::ast_matchers::MatchFinder&      finder_;
+    std::vector<clang::SourceRange> const& ranges_;
+    StmtHandler                            stmt_handler_;
+    DeclHandler                            decl_handler_;
 };
 
 int main(int argc, char const **argv) {
@@ -158,13 +251,12 @@ int main(int argc, char const **argv) {
     MatchFinder         finder;
     std::vector<clang::SourceRange> cond_true_ranges;
     PPCallbacksInstaller ppci("FOO", true, cond_true_ranges);
+
+    // set finders according to the preprocessing results
+    MatcherInstaller      set_up_source_ranges(finder, cond_true_ranges);
+    finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
     if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
         return result;
-    }
-
-    std::cout << "Collected replacements:\n";
-    for (auto const & r : tool.getReplacements()) {
-        std::cout << r.toString() << "\n";
     }
 
     return 0;
