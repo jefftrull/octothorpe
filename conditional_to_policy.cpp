@@ -132,7 +132,6 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         ci_ = &ci;
-        std::cerr << "begin processing " << fn.str() << "\n";
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(), mname_, sense_, cond_ranges_));
@@ -175,12 +174,12 @@ AST_MATCHER_P(clang::Decl,                declInRange,
 struct StmtHandler : clang::ast_matchers::MatchFinder::MatchCallback {
 
     virtual void run(clang::ast_matchers::MatchFinder::MatchResult const& result) {
-        std::cerr << "found a statement only present when FOO is defined:\n";
+        std::cout << "found a statement only present when the macro is defined:\n";
         clang::Stmt const * stmt = result.Nodes.getNodeAs<clang::Stmt>("stmt");
         auto const & sm = result.Context->getSourceManager();
         auto lopt = result.Context->getLangOpts();
-        print_source_range(std::cerr, &sm, lopt, stmt->getSourceRange());
-        std::cerr << ";\n";
+        print_source_range(std::cout, &sm, lopt, stmt->getSourceRange());
+        std::cout << ";\n";
     }
 };
             
@@ -188,12 +187,12 @@ struct StmtHandler : clang::ast_matchers::MatchFinder::MatchCallback {
 struct DeclHandler : clang::ast_matchers::MatchFinder::MatchCallback {
 
     virtual void run(clang::ast_matchers::MatchFinder::MatchResult const& result) {
-        std::cerr << "found a declaration only present when FOO is defined:\n";
+        std::cout << "found a typedef only present when the macro is defined:\n";
         clang::Decl const * decl = result.Nodes.getNodeAs<clang::Decl>("decl");
         auto const & sm = result.Context->getSourceManager();
         auto lopt = result.Context->getLangOpts();
-        print_source_range(std::cerr, &sm, lopt, decl->getSourceRange());
-        std::cerr << ";\n";
+        print_source_range(std::cout, &sm, lopt, decl->getSourceRange());
+        std::cout << ";\n";
     }
 };
             
@@ -247,22 +246,32 @@ int main(int argc, char const **argv) {
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
 
+    if (argc != 3) {
+        std::cerr << "usage: " << argv[0] << " MACRO filename\n";
+        return 1;
+    }
+            
+    std::string mname(argv[1]);
+
     /*
      * Prepare to evaluate macro defined condition
      */
 
-    // add -DFOO to a copy of the command line
-    std::vector<char const*> args(argv, argv + argc);
+    // create a fake command line of type Clang tools accept
+    std::vector<char const*> args;
+    args.push_back(argv[0]);
+    args.push_back(argv[2]);
     args.push_back("--");
-    args.push_back("-DFOO");
+    std::string define_macro("-D"); define_macro += mname;
+    args.push_back(define_macro.c_str());
     int args_c = args.size();
     CommonOptionsParser opt_defined(args_c, args.data(), ToolingSampleCategory);
 
     RefactoringTool     tool_defined(opt_defined.getCompilations(), opt_defined.getSourcePathList());
 
-    // prepare to store source ranges for FOO defined case
+    // prepare to store source ranges for defined case
     std::vector<clang::SourceRange> cond_defined_ranges;
-    PPCallbacksInstaller            ppci_defined("FOO", true, cond_defined_ranges);
+    PPCallbacksInstaller            ppci_defined(mname, true, cond_defined_ranges);
 
     // use test hook to set up range matchers after preprocessing but before AST visitation
     MatchFinder           finder_defined;
