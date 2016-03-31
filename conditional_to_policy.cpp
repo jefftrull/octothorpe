@@ -142,7 +142,7 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         : mname_(mname), cond_ranges_(cond_ranges), ci_(nullptr),
           decls_(decls), stmts_(stmts) {}
 
-    ~PPCallbacksInstaller() {}
+    ~PPCallbacksInstaller() override {}
 
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         ci_ = &ci;
@@ -239,9 +239,10 @@ private:
 // We don't know which source ranges we want to find until preprocessing completes,
 // which means we have to set up matchers after parsing begins but before AST traversal
 // it's a little weird to use this test hook but it's exactly what we need
-class MatcherInstaller : public clang::ast_matchers::MatchFinder::ParsingDoneTestCallback {
+struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCallback {
 
-public:
+    ~MatcherInstaller() override {}
+
     MatcherInstaller(clang::ast_matchers::MatchFinder& finder,
                      std::vector<clang::SourceRange> const& ranges,
                      RangeNodes<clang::Decl>& decl_nodes,
