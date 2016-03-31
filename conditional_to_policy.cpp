@@ -257,6 +257,8 @@ struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCall
         // ensure handler vectors don't resize, invalidating pointers
         decl_handlers_.reserve(ranges_.size());
         stmt_handlers_.reserve(ranges_.size());
+        decl_nodes_.reserve(ranges_.size());
+        stmt_nodes_.reserve(ranges_.size());
 
         for( auto const& range : ranges_ ) {
             // typedef matcher
