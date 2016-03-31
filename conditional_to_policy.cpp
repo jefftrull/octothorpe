@@ -24,8 +24,6 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Frontend/CompilerInstance.h"
 
-static llvm::cl::OptionCategory ToolingSampleCategory("Ifdef converter");
-
 void print_source_range(std::ostream& os, clang::SourceManager const* sm,
                         clang::LangOptions lopt, clang::SourceRange range) {
     auto beg = range.getBegin();
