@@ -301,20 +301,73 @@ private:
     RangeNodes<clang::Stmt>&               stmt_nodes_;
 };
 
+template<bool Sense>
+struct ConditionalNodeFinder {
+    ~ConditionalNodeFinder() {}
+    ConditionalNodeFinder(char const ** argv,
+                          std::vector<clang::SourceRange>& cond_ranges,  // result storage
+                          RangeNodes<clang::Decl>&         decls,
+                          RangeNodes<clang::Stmt>&         stmts)
+        : cond_ranges_(cond_ranges), decls_(decls), stmts_(stmts)
+    {
+        using namespace clang;
+        using namespace clang::tooling;
+        using namespace clang::ast_matchers;
+
+        // create a fake command line of type Clang tools accept
+        std::vector<char const*> args;
+        args.push_back(argv[0]);
+        args.push_back(argv[2]);
+        args.push_back("--");
+        // append -D for the "macro defined" case
+        std::string mname(argv[1]);
+        std::string define_macro("-D");
+        if (Sense) {
+            define_macro += mname;
+            args.push_back(define_macro.c_str());
+        }
+        int args_c = args.size();
+        // prepare tool arguments
+        // avoiding the use of CommonOptionsParser, which uses statics...
+        std::unique_ptr<FixedCompilationDatabase>
+            compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
+        std::vector<std::string> comp_file_list(1, argv[2]);
+        // define the tool from those options
+        RefactoringTool     tool(*compdb, comp_file_list);
+
+        // create callbacks for storing the conditional ranges as the preprocessor finds them
+        PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges_, decls_, stmts_);
+
+        // use test hook to set up range matchers: after preprocessing, but before AST visitation
+        MatchFinder           finder;
+        MatcherInstaller      set_up_source_ranges(finder, cond_ranges_, decls_, stmts_);
+        finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
+
+        // run the tool and report
+
+        std::cout << "Conditional source ranges for when FOO is ";
+        std::cout << (Sense ? "defined" : "not defined") << ":\n";
+        if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
+            throw std::logic_error("Clang failure, code " + std::to_string(result));
+        }
+    }
+
+private:
+    std::vector<clang::SourceRange>& cond_ranges_;
+    RangeNodes<clang::Decl>&         decls_;
+    RangeNodes<clang::Stmt>&         stmts_;
+
+};
+
 int main(int argc, char const **argv) {
-    using namespace clang;
-    using namespace clang::tooling;
-    using namespace clang::ast_matchers;
 
     if (argc != 3) {
         std::cerr << "usage: " << argv[0] << " MACRO filename\n";
         return 1;
     }
             
-    std::string mname(argv[1]);
-
     /*
-     * Prepare to evaluate macro defined condition
+     * Evaluate macro defined condition
      */
 
     // when tool run completes we will have the following data:
@@ -322,33 +375,14 @@ int main(int argc, char const **argv) {
     RangeNodes<clang::Decl> decls_defined;                 // typedefs in each range
     RangeNodes<clang::Stmt> stmts_defined;                 // statements in each range
 
-    // create a fake command line of type Clang tools accept
-    std::vector<char const*> args;
-    args.push_back(argv[0]);
-    args.push_back(argv[2]);
-    args.push_back("--");
-    std::string define_macro("-D"); define_macro += mname;
-    args.push_back(define_macro.c_str());
-    int args_c = args.size();
-    CommonOptionsParser opt_defined(args_c, args.data(), ToolingSampleCategory);
+    // build and run for "defined" case
+    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined, decls_defined, stmts_defined);
 
-    // create callbacks for storing the conditional ranges as the preprocessor finds them
-    PPCallbacksInstaller<true>      ppci_defined(mname, cond_ranges_defined,
-                                                 decls_defined, stmts_defined);
+    // and the same for the "undefined" case:
+    std::vector<clang::SourceRange> cond_ranges_undefined;
+    RangeNodes<clang::Decl> decls_undefined;
+    RangeNodes<clang::Stmt> stmts_undefined;
+    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined, decls_undefined, stmts_undefined);
 
-    // use test hook to set up range matchers after preprocessing but before AST visitation
-    MatchFinder           finder_defined;
-    MatcherInstaller      set_up_source_ranges(finder_defined, cond_ranges_defined,
-                                               decls_defined, stmts_defined);
-    finder_defined.registerTestCallbackAfterParsing(&set_up_source_ranges);
-
-    // run the tool for the defined case
-    RefactoringTool     tool_defined(opt_defined.getCompilations(), opt_defined.getSourcePathList());
-    std::cout << "Conditional source ranges for when FOO is defined:\n";
-    if (int result = tool_defined.run(newFrontendActionFactory(&finder_defined, &ppci_defined).get())) {
-        return result;
-    }
-
-    // output results
     return 0;
 }

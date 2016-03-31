@@ -77,8 +77,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
 # Clang-using example
 
 add_executable( c2p conditional_to_policy.cpp )
+# Note Clang is normally compiled without exceptions or RTTI... tread carefully
 set_target_properties( c2p PROPERTIES
-  COMPILE_FLAGS "${LLVM_CXXFLAGS} -std=c++14"
+  COMPILE_FLAGS "${LLVM_CXXFLAGS} -std=c++14 -fexceptions"
   LINK_FLAGS "${LLVM_LDFLAGS}"
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
