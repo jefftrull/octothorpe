@@ -56,14 +56,14 @@ void print_decorated_source_range(std::ostream& os, clang::SourceManager const* 
 
 // BOZO needs a better name
 // BOZO remove unneeded sm and lopt members
+template<bool Sense>    // whether to find ranges where the symbols is defined
 struct MyCallbacks : clang::PPCallbacks
 {
     MyCallbacks(clang::LangOptions lopt,
                 clang::SourceManager & sm,
                 std::string mname,
-                bool sense,
                 std::vector<clang::SourceRange>& cond_ranges)
-        : lopt_(lopt), sm_(sm), mname_(mname), sense_(sense), cond_ranges_(cond_ranges) {}
+        : lopt_(lopt), sm_(sm), mname_(mname), cond_ranges_(cond_ranges) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
@@ -91,7 +91,7 @@ struct MyCallbacks : clang::PPCallbacks
         // see if this else is related to an ifdef/ifndef for our target macro
         auto start_it = cond_starts_.find(ifloc);
         if (start_it != cond_starts_.end()) {
-            if (start_it->second == sense_) {
+            if (start_it->second == Sense) {
                 // this is the *end* of our range of interest
                 cond_ranges_.emplace_back(ifloc, elseloc);
             }
@@ -106,13 +106,13 @@ struct MyCallbacks : clang::PPCallbacks
         if (start_it != cond_starts_.end()) {
             // this endif may terminate:
             // - an if of the desired sense without an else (range is ifloc through here)
-            if ((start_it->second == sense_) && !else_loc_) {
+            if ((start_it->second == Sense) && !else_loc_) {
                 cond_ranges_.emplace_back(ifloc, endifloc);
             // - an if of the inverted sense with an else (range is else through here)
-            } else if ((start_it->second != sense_) && else_loc_) {
+            } else if ((start_it->second != Sense) && else_loc_) {
                 cond_ranges_.emplace_back(*else_loc_, endifloc);
             // - an if of inverted sense without an else - empty range
-            } else if (start_it->second != sense_) {
+            } else if (start_it->second != Sense) {
                 cond_ranges_.emplace_back(endifloc, endifloc);
             }
             // - an if of desired sense with else (we found the range when we found the else)
@@ -123,7 +123,6 @@ private:
     clang::LangOptions    lopt_;
     clang::SourceManager& sm_;
     std::string           mname_;
-    bool                  sense_;     // true if we want to capture text when mname is defined
     std::map<clang::SourceLocation, bool> cond_starts_;
     std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
     std::vector<clang::SourceRange>& cond_ranges_;
@@ -133,13 +132,14 @@ private:
 template<typename Node>
 using RangeNodes = std::vector<std::vector<Node const *>>;
 
+template<bool Sense>
 struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 {
-    PPCallbacksInstaller(std::string mname, bool sense,
+    PPCallbacksInstaller(std::string mname,
                          std::vector<clang::SourceRange>& cond_ranges,
                          RangeNodes<clang::Decl> const& decls,
                          RangeNodes<clang::Stmt> const& stmts)
-        : mname_(mname), sense_(sense), cond_ranges_(cond_ranges), ci_(nullptr),
+        : mname_(mname), cond_ranges_(cond_ranges), ci_(nullptr),
           decls_(decls), stmts_(stmts) {}
 
     ~PPCallbacksInstaller() {}
@@ -149,8 +149,8 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
-            llvm::make_unique<MyCallbacks>(ci.getLangOpts(), ci.getSourceManager(),
-                                           mname_, sense_, cond_ranges_));
+            llvm::make_unique<MyCallbacks<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
+                                                  mname_, cond_ranges_));
         return true;
     }
 
@@ -189,7 +189,6 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 
 private:
     std::string mname_;
-    bool        sense_;
     std::vector<clang::SourceRange>& cond_ranges_;
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
@@ -331,7 +330,7 @@ int main(int argc, char const **argv) {
     CommonOptionsParser opt_defined(args_c, args.data(), ToolingSampleCategory);
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
-    PPCallbacksInstaller            ppci_defined(mname, true, cond_ranges_defined,
+    PPCallbacksInstaller<true>      ppci_defined(mname, cond_ranges_defined,
                                                  decls_defined, stmts_defined);
 
     // use test hook to set up range matchers after preprocessing but before AST visitation
