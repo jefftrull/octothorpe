@@ -17,21 +17,29 @@
 #include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/FileManager.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Refactoring.h"
 #include "clang/Tooling/Tooling.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "clang/Rewrite/Core/Rewriter.h"
 
-void print_source_range(std::ostream& os, clang::SourceManager const* sm,
-                        clang::LangOptions lopt, clang::SourceRange range) {
+std::string get_source_range(clang::SourceManager const* sm,
+                             clang::LangOptions lopt, clang::SourceRange range) {
     auto beg = range.getBegin();
     auto end = range.getEnd();
     clang::SourceLocation true_end =
         clang::Lexer::getLocForEndOfToken(end, 0, *sm, lopt);
-    os << std::string(sm->getCharacterData(beg),
-                      sm->getCharacterData(true_end) - sm->getCharacterData(beg));
+    return std::string(sm->getCharacterData(beg),
+                       sm->getCharacterData(true_end) - sm->getCharacterData(beg));
+}
+
+void print_source_range(std::ostream& os, clang::SourceManager const* sm,
+                        clang::LangOptions lopt, clang::SourceRange range) {
+    os << get_source_range(sm, lopt, range);
 }
 
 void print_source_range_info(std::ostream& os, clang::SourceManager const* sm,
@@ -141,14 +149,16 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
     PPCallbacksInstaller(std::string mname,
                          std::vector<clang::SourceRange>& cond_ranges,
                          RangeNodes<clang::Decl> const& decls,
-                         RangeNodes<clang::Stmt> const& stmts)
+                         RangeNodes<clang::Stmt> const& stmts,
+                         clang::tooling::Replacements* replace)
         : mname_(mname), cond_ranges_(cond_ranges), ci_(nullptr),
-          decls_(decls), stmts_(stmts) {}
+          decls_(decls), stmts_(stmts), replace_(replace) {}
 
     ~PPCallbacksInstaller() override {}
 
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         ci_ = &ci;
+        fn_ = fn;
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
@@ -161,8 +171,9 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         // return information about the source ranges we found and their contents
         // it seems that by the time the RefactoringTool finishes running some of the
         // compiler/ast information gets lost, so we do it here while we can still do lookups
-        clang::SourceManager const* sm = &ci_->getSourceManager();
-        clang::LangOptions   lopt = ci_->getLangOpts();
+        using namespace clang;
+        SourceManager const* sm = &ci_->getSourceManager();
+        LangOptions   lopt = ci_->getLangOpts();
         for ( std::size_t i = 0; i < cond_ranges_.size(); ++i) {
             if (cond_ranges_[i].isInvalid()) {
                 continue;
@@ -176,21 +187,36 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
             if (decls_[i].empty() && stmts_[i].empty()) {
                 std::cout << " contains nothing we are interested in\n";
             }
-            if (!decls_[i].empty()) {
-                std::cout << " contains " << decls_[i].size() << " type declarations:\n";
-                for( clang::Decl const * decl : decls_[i] ) {
-                    print_source_range(std::cout, sm, lopt, decl->getSourceRange());
-                    std::cout << ";\n";
-                }
-            }
             if (!stmts_[i].empty()) {
                 std::cout << " contains " << stmts_[i].size() << " statements:\n";
-                for( clang::Stmt const * stmt : stmts_[i] ) {
+                for( Stmt const * stmt : stmts_[i] ) {
                     print_source_range(std::cout, sm, lopt, stmt->getSourceRange());
                     std::cout << ";\n";
                 }
             }
+            // create a replacement that removes this conditional range
+            replace_->insert(tooling::Replacement(*sm, CharSourceRange(cond_ranges_[i], true),
+                                                  "", lopt));
+
         }
+
+        // create a specialization for this sense of the target macro
+        std::string cond_class("template<>\nstruct ");
+        cond_class += (mname_ + "_class<" + (Sense ? "true" : "false") + "> {\n");
+        for ( auto const& declgroup : decls_ ) {
+            for ( auto decl : declgroup ) {
+                cond_class += "    ";
+                cond_class += get_source_range(&decl->getASTContext().getSourceManager(),
+                                               decl->getASTContext().getLangOpts(),
+                                               decl->getSourceRange());
+                cond_class += ";\n";
+            }
+        }
+        cond_class += "};\n";
+
+        // create a Replacement from it
+        replace_->insert(tooling::Replacement(fn_, 0, 0, cond_class));  // insert at beginning
+
     }
 
 private:
@@ -199,7 +225,9 @@ private:
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
-            
+    clang::tooling::Replacements * replace_;
+
+    StringRef fn_;
 };
 
 namespace custom_matchers {
@@ -322,8 +350,9 @@ struct ConditionalNodeFinder {
     ConditionalNodeFinder(char const ** argv,
                           std::vector<clang::SourceRange>& cond_ranges,  // result storage
                           RangeNodes<clang::Decl>&         decls,
-                          RangeNodes<clang::Stmt>&         stmts)
-        : cond_ranges_(cond_ranges), decls_(decls), stmts_(stmts)
+                          RangeNodes<clang::Stmt>&         stmts,
+                          clang::tooling::Replacements&    replacements)
+        : cond_ranges_(cond_ranges), decls_(decls), stmts_(stmts), replacements_(replacements)
     {
         using namespace clang;
         using namespace clang::tooling;
@@ -351,14 +380,22 @@ struct ConditionalNodeFinder {
         RefactoringTool     tool(*compdb, comp_file_list);
 
         // create callbacks for storing the conditional ranges as the preprocessor finds them
-        PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges_, decls_, stmts_);
+        PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges_, decls_, stmts_, &replacements_);
 
         // use test hook to set up range matchers: after preprocessing, but before AST visitation
         MatchFinder           finder;
         MatcherInstaller      set_up_source_ranges(finder, cond_ranges_, decls_, stmts_);
         finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
 
-        // run the tool and report
+        if (Sense) {
+            // seed replacements with the base template
+            // using the fact that we run the "true" case first...
+            std::string base_class("template<bool MacroDefined>\nstruct ");
+            base_class += (mname + "_class;\n");
+            replacements_.insert(Replacement(comp_file_list[0], 0, 0, base_class));
+        }
+
+        // run the tool
 
         std::cout << "Conditional source ranges for when FOO is ";
         std::cout << (Sense ? "defined" : "not defined") << ":\n";
@@ -371,10 +408,13 @@ private:
     std::vector<clang::SourceRange>& cond_ranges_;
     RangeNodes<clang::Decl>&         decls_;
     RangeNodes<clang::Stmt>&         stmts_;
+    clang::tooling::Replacements&    replacements_;
 
 };
 
 int main(int argc, char const **argv) {
+
+    using namespace clang;
 
     if (argc != 3) {
         std::cerr << "usage: " << argv[0] << " MACRO filename\n";
@@ -386,18 +426,48 @@ int main(int argc, char const **argv) {
      */
 
     // when tool run completes we will have the following data:
-    std::vector<clang::SourceRange> cond_ranges_defined;   // source range for each ifdef
-    RangeNodes<clang::Decl> decls_defined;                 // typedefs in each range
-    RangeNodes<clang::Stmt> stmts_defined;                 // statements in each range
+    tooling::Replacements replacements;             // modification instructions
 
     // build and run for "defined" case
-    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined, decls_defined, stmts_defined);
+    std::vector<SourceRange> cond_ranges_defined;   // source range for each ifdef
+    RangeNodes<Decl> decls_defined;                 // typedefs in each range
+    RangeNodes<Stmt> stmts_defined;                 // statements in each range
+
+    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined,
+                                               decls_defined, stmts_defined, replacements);
 
     // and the same for the "undefined" case:
-    std::vector<clang::SourceRange> cond_ranges_undefined;
-    RangeNodes<clang::Decl> decls_undefined;
-    RangeNodes<clang::Stmt> stmts_undefined;
-    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined, decls_undefined, stmts_undefined);
+    std::vector<SourceRange> cond_ranges_undefined;
+    RangeNodes<Decl> decls_undefined;
+    RangeNodes<Stmt> stmts_undefined;
+    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined,
+                                                  decls_undefined, stmts_undefined, replacements);
 
+    std::cerr << "replacements:\n";
+    for ( auto const& rep : replacements ) {
+        std::cerr << rep.toString() << "\n";
+    }
+
+    // apply all replacements to original source file
+    // (code from RefactoringTool::runAndSave)
+    LangOptions DefaultLangOptions;
+    IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
+    TextDiagnosticPrinter tdp(llvm::errs(), &*DiagOpts);
+    DiagnosticsEngine diagnostics(
+        IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs()),
+        &*DiagOpts, &tdp, false);
+    FileManager fm{FileSystemOptions()};
+    SourceManager sources(diagnostics, fm);
+    Rewriter rewriter(sources, DefaultLangOptions);
+    if (!tooling::applyAllReplacements(replacements, rewriter)) {
+        std::cerr << "rewriting of source file failed\n";
+        return 1;
+    }
+    if (rewriter.overwriteChangedFiles()) {
+        std::cerr << "failed to save results\n";
+        return 2;
+    }
+
+    
     return 0;
 }
