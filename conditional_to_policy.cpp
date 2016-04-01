@@ -83,6 +83,8 @@ struct MyCallbacks : clang::PPCallbacks
     }
 
     // else and endif are reported as long as their corresponding if is not *within* a skipped region
+    // Note in this area that source ranges are inclusive of their bounds, and the "end" location
+    // may point to the start of a token, in which case the entire token is included.
 
     void Else(clang::SourceLocation elseloc,
               clang::SourceLocation ifloc) override {
@@ -91,7 +93,8 @@ struct MyCallbacks : clang::PPCallbacks
         if (start_it != cond_starts_.end()) {
             if (start_it->second == Sense) {
                 // this is the *end* of our range of interest
-                cond_ranges_.emplace_back(ifloc, elseloc);
+                cond_ranges_.emplace_back(ifloc.getLocWithOffset(-1),
+                                          elseloc.getLocWithOffset(-2));  // *before* the hash
             }
             else_loc_ = elseloc;
         }
@@ -105,13 +108,15 @@ struct MyCallbacks : clang::PPCallbacks
             // this endif may terminate:
             // - an if of the desired sense without an else (range is ifloc through here)
             if ((start_it->second == Sense) && !else_loc_) {
-                cond_ranges_.emplace_back(ifloc, endifloc);
+                cond_ranges_.emplace_back(ifloc.getLocWithOffset(-1), endifloc);
             // - an if of the inverted sense with an else (range is else through here)
             } else if ((start_it->second != Sense) && else_loc_) {
-                cond_ranges_.emplace_back(*else_loc_, endifloc);
+                cond_ranges_.emplace_back(else_loc_->getLocWithOffset(-1), endifloc);
             // - an if of inverted sense without an else - empty range
             } else if (start_it->second != Sense) {
-                cond_ranges_.emplace_back(endifloc, endifloc);
+                // an empty range must have end before start... but some parts of Clang don't like
+                // we will detect this case before passing it on to any part of Clang
+                cond_ranges_.emplace_back(clang::SourceRange());
             }
             // - an if of desired sense with else (we found the range when we found the else)
         }
@@ -159,6 +164,9 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         clang::SourceManager const* sm = &ci_->getSourceManager();
         clang::LangOptions   lopt = ci_->getLangOpts();
         for ( std::size_t i = 0; i < cond_ranges_.size(); ++i) {
+            if (cond_ranges_[i].isInvalid()) {
+                continue;
+            }
             std::cout << "The range ";
             print_source_range_info(std::cout, sm, cond_ranges_[i]);
             if (cond_ranges_[i].getBegin() == cond_ranges_[i].getEnd()) {
@@ -262,6 +270,17 @@ struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCall
             // typedef matcher
             decl_nodes_.emplace_back();
             decl_handlers_.emplace_back(decl_nodes_.back());
+            // statement matcher
+            stmt_nodes_.emplace_back();
+            stmt_handlers_.emplace_back(stmt_nodes_.back());
+
+            if (range.isInvalid()) {
+                // one of our empty ranges.  Do not install finder/matcher
+                // but keep placeholders so ranges line up between defined/undefined conditions
+                continue;
+            }
+
+            // install range finder for conditional declarations
             finder_.addMatcher(
                 decl(
                     isExpansionInMainFile(),   // not in an included header
@@ -270,9 +289,7 @@ struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCall
                     decl().bind("target")),
                 &decl_handlers_.back());
 
-            // statement matcher
-            stmt_nodes_.emplace_back();
-            stmt_handlers_.emplace_back(stmt_nodes_.back());
+            // install range finder for conditional statements
             finder_.addMatcher(
                 stmt(                          // statement requirements:
                     isExpansionInMainFile(),
