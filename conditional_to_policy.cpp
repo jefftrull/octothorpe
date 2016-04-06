@@ -345,70 +345,66 @@ private:
 };
 
 template<bool Sense>
-struct ConditionalNodeFinder {
-    ~ConditionalNodeFinder() {}
-    ConditionalNodeFinder(char const ** argv,
-                          std::vector<clang::SourceRange>& cond_ranges,  // result storage
-                          clang::tooling::Replacements&    replacements)
-        : cond_ranges_(cond_ranges), replacements_(replacements)
-    {
-        using namespace clang;
-        using namespace clang::tooling;
-        using namespace clang::ast_matchers;
+int FindConditionalNodes(char const ** argv,
+                         std::vector<clang::SourceRange>& cond_ranges,  // result storage
+                         std::vector<std::set<std::string>>& typedefs,
+                         clang::tooling::Replacements&    replacements)
+{
+    using namespace clang;
+    using namespace clang::tooling;
+    using namespace clang::ast_matchers;
 
-        // create a fake command line of type Clang tools accept
-        std::vector<char const*> args;
-        args.push_back(argv[0]);
-        args.push_back(argv[2]);
-        args.push_back("--");
-        // append -D for the "macro defined" case
-        std::string mname(argv[1]);
-        std::string define_macro("-D");
-        if (Sense) {
-            define_macro += mname;
-            args.push_back(define_macro.c_str());
-        }
-        int args_c = args.size();
-        // prepare tool arguments
-        // avoiding the use of CommonOptionsParser, which uses statics...
-        std::unique_ptr<FixedCompilationDatabase>
-            compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
-        std::vector<std::string> comp_file_list(1, argv[2]);
-        // define the tool from those options
-        RefactoringTool     tool(*compdb, comp_file_list);
+    // create a fake command line of type Clang tools accept
+    std::vector<char const*> args;
+    args.push_back(argv[0]);
+    args.push_back(argv[2]);
+    args.push_back("--");
+    // append -D for the "macro defined" case
+    std::string mname(argv[1]);
+    std::string define_macro("-D");
+    if (Sense) {
+        define_macro += mname;
+        args.push_back(define_macro.c_str());
+    }
+    int args_c = args.size();
+    // prepare tool arguments
+    // avoiding the use of CommonOptionsParser, which uses statics...
+    std::unique_ptr<FixedCompilationDatabase>
+        compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
+    std::vector<std::string> comp_file_list(1, argv[2]);
+    // define the tool from those options
+    RefactoringTool     tool(*compdb, comp_file_list);
 
-        // create callbacks for storing the conditional ranges as the preprocessor finds them
-        PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges_, decls_, stmts_, &replacements_);
+    RangeNodes<clang::Decl>          decls;
+    RangeNodes<clang::Stmt>          stmts;
 
-        // use test hook to set up range matchers: after preprocessing, but before AST visitation
-        MatchFinder           finder;
-        MatcherInstaller      set_up_source_ranges(finder, cond_ranges_, decls_, stmts_);
-        finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
+    // create callbacks for storing the conditional ranges as the preprocessor finds them
+    PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges, decls, stmts, &replacements);
 
-        if (Sense) {
-            // seed replacements with the base template
-            // using the fact that we run the "true" case first...
-            std::string base_class("template<bool MacroDefined>\nstruct ");
-            base_class += (mname + "_class;\n");
-            replacements_.insert(Replacement(comp_file_list[0], 0, 0, base_class));
-        }
+    // use test hook to set up range matchers: after preprocessing, but before AST visitation
+    MatchFinder           finder;
+    MatcherInstaller      set_up_source_ranges(finder, cond_ranges, decls, stmts);
+    finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
 
-        // run the tool
-
-        std::cout << "Conditional source ranges for when FOO is ";
-        std::cout << (Sense ? "defined" : "not defined") << ":\n";
-        if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
-            throw std::logic_error("Clang failure, code " + std::to_string(result));
-        }
+    if (Sense) {
+        // seed replacements with the base template
+        // using the fact that we run the "true" case first...
+        std::string base_class("template<bool MacroDefined>\nstruct ");
+        base_class += (mname + "_class;\n");
+        replacements.insert(Replacement(comp_file_list[0], 0, 0, base_class));
     }
 
-private:
-    std::vector<clang::SourceRange>& cond_ranges_;
-    RangeNodes<clang::Decl>          decls_;
-    RangeNodes<clang::Stmt>          stmts_;
-    clang::tooling::Replacements&    replacements_;
+    // run the tool
 
-};
+    std::cout << "Conditional source ranges for when FOO is ";
+    std::cout << (Sense ? "defined" : "not defined") << ":\n";
+    if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
+        return result;
+    }
+
+
+    return 0;
+}
 
 int main(int argc, char const **argv) {
 
@@ -428,11 +424,17 @@ int main(int argc, char const **argv) {
 
     // build and run for "defined" case
     std::vector<SourceRange> cond_ranges_defined;   // source range for each ifdef
-    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined, replacements);
+    std::vector<std::set<std::string>> typedefs_defined;
+    if (int result = FindConditionalNodes<true>(argv, cond_ranges_defined, typedefs_defined, replacements)) {
+        return result;
+    }
 
     // and the same for the "undefined" case:
     std::vector<SourceRange> cond_ranges_undefined;
-    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined, replacements);
+    std::vector<std::set<std::string>> typedefs_undefined;
+    if (int result = FindConditionalNodes<false>(argv, cond_ranges_undefined, typedefs_undefined, replacements)) {
+        return result;
+    }
 
     std::cerr << "replacements:\n";
     for ( auto const& rep : replacements ) {
