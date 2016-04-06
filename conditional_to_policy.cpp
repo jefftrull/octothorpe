@@ -349,10 +349,8 @@ struct ConditionalNodeFinder {
     ~ConditionalNodeFinder() {}
     ConditionalNodeFinder(char const ** argv,
                           std::vector<clang::SourceRange>& cond_ranges,  // result storage
-                          RangeNodes<clang::Decl>&         decls,
-                          RangeNodes<clang::Stmt>&         stmts,
                           clang::tooling::Replacements&    replacements)
-        : cond_ranges_(cond_ranges), decls_(decls), stmts_(stmts), replacements_(replacements)
+        : cond_ranges_(cond_ranges), replacements_(replacements)
     {
         using namespace clang;
         using namespace clang::tooling;
@@ -406,8 +404,8 @@ struct ConditionalNodeFinder {
 
 private:
     std::vector<clang::SourceRange>& cond_ranges_;
-    RangeNodes<clang::Decl>&         decls_;
-    RangeNodes<clang::Stmt>&         stmts_;
+    RangeNodes<clang::Decl>          decls_;
+    RangeNodes<clang::Stmt>          stmts_;
     clang::tooling::Replacements&    replacements_;
 
 };
@@ -430,18 +428,11 @@ int main(int argc, char const **argv) {
 
     // build and run for "defined" case
     std::vector<SourceRange> cond_ranges_defined;   // source range for each ifdef
-    RangeNodes<Decl> decls_defined;                 // typedefs in each range
-    RangeNodes<Stmt> stmts_defined;                 // statements in each range
-
-    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined,
-                                               decls_defined, stmts_defined, replacements);
+    ConditionalNodeFinder<true> runner_defined(argv, cond_ranges_defined, replacements);
 
     // and the same for the "undefined" case:
     std::vector<SourceRange> cond_ranges_undefined;
-    RangeNodes<Decl> decls_undefined;
-    RangeNodes<Stmt> stmts_undefined;
-    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined,
-                                                  decls_undefined, stmts_undefined, replacements);
+    ConditionalNodeFinder<false> runner_undefined(argv, cond_ranges_undefined, replacements);
 
     std::cerr << "replacements:\n";
     for ( auto const& rep : replacements ) {
