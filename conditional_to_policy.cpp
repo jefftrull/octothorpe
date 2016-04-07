@@ -61,7 +61,6 @@ void print_decorated_source_range(std::ostream& os, clang::SourceManager const* 
 }
 
 // BOZO needs a better name
-// BOZO remove unneeded sm and lopt members
 template<bool Sense>    // whether to find ranges where the symbols is defined
 struct MyCallbacks : clang::PPCallbacks
 {
@@ -69,7 +68,7 @@ struct MyCallbacks : clang::PPCallbacks
                 clang::SourceManager & sm,
                 std::string mname,
                 std::vector<clang::SourceRange>& cond_ranges)
-        : lopt_(lopt), sm_(sm), mname_(mname), cond_ranges_(cond_ranges) {}
+        : mname_(mname), cond_ranges_(cond_ranges) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
@@ -131,8 +130,6 @@ struct MyCallbacks : clang::PPCallbacks
     }        
 
 private:
-    clang::LangOptions    lopt_;
-    clang::SourceManager& sm_;
     std::string           mname_;
     std::map<clang::SourceLocation, bool> cond_starts_;
     std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
