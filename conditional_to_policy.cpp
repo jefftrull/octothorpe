@@ -143,16 +143,62 @@ private:
 template<typename Node>
 using RangeNodes = std::vector<std::vector<Node const *>>;
 
+// We define our own type of "location" to be independent of any SourceManager
+// It's capable of being turned into a Replacement
+struct CondLocation
+{
+    CondLocation(clang::SourceManager const& sm,
+                 clang::SourceLocation const& loc)
+        : filename_(sm.getFilename(loc)), offset_(sm.getFileOffset(loc)) {}
+
+    // so we can use in ordered containers
+    bool operator<(const CondLocation& other) const {
+        assert(other.filename_ == filename_);
+        return (offset_ < other.offset_);
+    }
+
+    std::string const& getFilename() const {
+        return filename_;
+    }
+    unsigned getFileOffset() const {
+        return offset_;
+    }
+
+private:
+    std::string filename_;
+    unsigned    offset_;
+};
+
+struct CondRange {
+    CondRange(clang::SourceManager const& sm,
+              clang::SourceRange const& range)
+        : beg_(CondLocation(sm, range.getBegin())),
+          end_(CondLocation(sm, range.getEnd())) {}
+
+    CondLocation const& getBegin() const {
+        return beg_;
+    }
+
+    CondLocation const& getEnd() const {
+        return end_;
+    }
+
+private:
+    CondLocation beg_, end_;
+};
+
+
 template<bool Sense>
 struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 {
     PPCallbacksInstaller(std::string mname,
-                         std::vector<clang::SourceRange>& cond_ranges,
+                         std::vector<clang::SourceRange>& source_ranges,
+                         std::vector<std::experimental::optional<CondRange>>& cond_ranges,
                          RangeNodes<clang::Decl> const& decls,
                          RangeNodes<clang::Stmt> const& stmts,
                          clang::tooling::Replacements* replace)
-        : mname_(mname), cond_ranges_(cond_ranges), ci_(nullptr),
-          decls_(decls), stmts_(stmts), replace_(replace) {}
+        : mname_(mname), source_ranges_(source_ranges), cond_ranges_(cond_ranges),
+          ci_(nullptr), decls_(decls), stmts_(stmts), replace_(replace) {}
 
     ~PPCallbacksInstaller() override {}
 
@@ -163,7 +209,7 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
             llvm::make_unique<MyCallbacks<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
-                                                  mname_, cond_ranges_));
+                                                  mname_, source_ranges_));
         return true;
     }
 
@@ -174,13 +220,18 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         using namespace clang;
         SourceManager const* sm = &ci_->getSourceManager();
         LangOptions   lopt = ci_->getLangOpts();
-        for ( std::size_t i = 0; i < cond_ranges_.size(); ++i) {
-            if (cond_ranges_[i].isInvalid()) {
+
+        // fill CondRange container with default-constructed (therefore empty) ranges
+        cond_ranges_.resize(source_ranges_.size());
+
+        for ( std::size_t i = 0; i < source_ranges_.size(); ++i) {
+            if (source_ranges_[i].isInvalid()) {
                 continue;
             }
+            cond_ranges_[i] = CondRange(*sm, source_ranges_[i]);
             std::cout << "The range ";
-            print_source_range_info(std::cout, sm, cond_ranges_[i]);
-            if (cond_ranges_[i].getBegin() == cond_ranges_[i].getEnd()) {
+            print_source_range_info(std::cout, sm, source_ranges_[i]);
+            if (source_ranges_[i].getBegin() == source_ranges_[i].getEnd()) {
                 std::cout << " is empty\n";
                 continue;
             }
@@ -195,7 +246,7 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
                 }
             }
             // create a replacement that removes this conditional range
-            replace_->insert(tooling::Replacement(*sm, CharSourceRange(cond_ranges_[i], true),
+            replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_[i], true),
                                                   "", lopt));
 
         }
@@ -221,7 +272,8 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
 
 private:
     std::string mname_;
-    std::vector<clang::SourceRange>& cond_ranges_;
+    std::vector<clang::SourceRange>& source_ranges_;
+    std::vector<std::experimental::optional<CondRange>>& cond_ranges_;
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
@@ -346,7 +398,8 @@ private:
 
 template<bool Sense>
 int FindConditionalNodes(char const ** argv,
-                         std::vector<clang::SourceRange>& cond_ranges,  // result storage
+                         // result storage
+                         std::vector<std::experimental::optional<CondRange>>& cond_ranges,
                          std::vector<std::set<std::string>>& typedefs,
                          clang::tooling::Replacements&    replacements)
 {
@@ -375,15 +428,17 @@ int FindConditionalNodes(char const ** argv,
     // define the tool from those options
     RefactoringTool     tool(*compdb, comp_file_list);
 
-    RangeNodes<clang::Decl>          decls;
-    RangeNodes<clang::Stmt>          stmts;
+    std::vector<SourceRange>         source_ranges;
+    RangeNodes<Decl>                 decls;
+    RangeNodes<Stmt>                 stmts;
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
-    PPCallbacksInstaller<Sense>      ppci(mname, cond_ranges, decls, stmts, &replacements);
+    PPCallbacksInstaller<Sense>      ppci(mname, source_ranges, cond_ranges,
+                                          decls, stmts, &replacements);
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
-    MatcherInstaller      set_up_source_ranges(finder, cond_ranges, decls, stmts);
+    MatcherInstaller      set_up_source_ranges(finder, source_ranges, decls, stmts);
     finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
 
     if (Sense) {
@@ -423,14 +478,14 @@ int main(int argc, char const **argv) {
     tooling::Replacements replacements;             // modification instructions
 
     // build and run for "defined" case
-    std::vector<SourceRange> cond_ranges_defined;   // source range for each ifdef
+    std::vector<std::experimental::optional<CondRange>> cond_ranges_defined;   // source range for each ifdef
     std::vector<std::set<std::string>> typedefs_defined;
     if (int result = FindConditionalNodes<true>(argv, cond_ranges_defined, typedefs_defined, replacements)) {
         return result;
     }
 
     // and the same for the "undefined" case:
-    std::vector<SourceRange> cond_ranges_undefined;
+    std::vector<std::experimental::optional<CondRange>> cond_ranges_undefined;
     std::vector<std::set<std::string>> typedefs_undefined;
     if (int result = FindConditionalNodes<false>(argv, cond_ranges_undefined, typedefs_undefined, replacements)) {
         return result;
