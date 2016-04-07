@@ -27,6 +27,8 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 
+#include <boost/function_output_iterator.hpp>
+
 std::string get_source_range(clang::SourceManager const* sm,
                              clang::LangOptions lopt, clang::SourceRange range) {
     auto beg = range.getBegin();
@@ -520,17 +522,20 @@ int main(int argc, char const **argv) {
         CondLocation start = std::min(cond_ranges_defined[i]->getBegin(),
                                       cond_ranges_undefined[i]->getBegin());
 
-        std::vector<std::string> common_types;
-        std::set_intersection(typedefs_defined[i].begin(), typedefs_defined[i].end(),
-                              typedefs_undefined[i].begin(), typedefs_undefined[i].end(),
-                              std::back_inserter(common_types));
-        
         std::string mname(argv[1]);
-        for ( auto const & t : common_types ) {
-            std::string tdef("    using " + t + " = " + mname + "_t::" + t + ";\n");
-            replacements.insert(tooling::Replacement(start.getFilename(), start.getFileOffset(),
-                                                     0, tdef));
-        }
+        std::set_intersection(
+            typedefs_defined[i].begin(), typedefs_defined[i].end(),
+            typedefs_undefined[i].begin(), typedefs_undefined[i].end(),
+            // for each type declared in BOTH configurations:
+            boost::make_function_output_iterator(
+                [&](std::string const& t) {
+                    // insert a using statement in the body:
+                    std::string tdef("    using " + t + " = " + mname + "_t::" + t + ";\n");
+                    replacements.insert(
+                        tooling::Replacement(start.getFilename(),
+                                             start.getFileOffset(),
+                                             0, tdef));
+                }));
     }    
 
     std::cerr << "replacements:\n";
