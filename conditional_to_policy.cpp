@@ -68,8 +68,8 @@ struct PPActions : clang::PPCallbacks
     PPActions(clang::LangOptions lopt,
                 clang::SourceManager & sm,
                 std::string mname,
-                std::vector<clang::SourceRange>& cond_ranges)
-        : mname_(mname), cond_ranges_(cond_ranges) {}
+                std::vector<clang::SourceRange>& source_ranges)
+        : mname_(mname), source_ranges_(source_ranges) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
@@ -101,8 +101,8 @@ struct PPActions : clang::PPCallbacks
         if (start_it != cond_starts_.end()) {
             if (start_it->second == Sense) {
                 // this is the *end* of our range of interest
-                cond_ranges_.emplace_back(ifloc.getLocWithOffset(-1),
-                                          elseloc.getLocWithOffset(-2));  // *before* the hash
+                source_ranges_.emplace_back(ifloc.getLocWithOffset(-1),
+                                            elseloc.getLocWithOffset(-2));  // *before* the hash
             }
             else_loc_ = elseloc;
         }
@@ -116,15 +116,15 @@ struct PPActions : clang::PPCallbacks
             // this endif may terminate:
             // - an if of the desired sense without an else (range is ifloc through here)
             if ((start_it->second == Sense) && !else_loc_) {
-                cond_ranges_.emplace_back(ifloc.getLocWithOffset(-1), endifloc);
+                source_ranges_.emplace_back(ifloc.getLocWithOffset(-1), endifloc);
             // - an if of the inverted sense with an else (range is else through here)
             } else if ((start_it->second != Sense) && else_loc_) {
-                cond_ranges_.emplace_back(else_loc_->getLocWithOffset(-1), endifloc);
+                source_ranges_.emplace_back(else_loc_->getLocWithOffset(-1), endifloc);
             // - an if of inverted sense without an else - empty range
             } else if (start_it->second != Sense) {
                 // an empty range must have end before start... but some parts of Clang don't like
                 // we will detect this case before passing it on to any part of Clang
-                cond_ranges_.emplace_back(clang::SourceRange());
+                source_ranges_.emplace_back(clang::SourceRange());
             }
             // - an if of desired sense with else (we found the range when we found the else)
         }
@@ -134,7 +134,7 @@ private:
     std::string           mname_;
     std::map<clang::SourceLocation, bool> cond_starts_;
     std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
-    std::vector<clang::SourceRange>& cond_ranges_;
+    std::vector<clang::SourceRange>& source_ranges_;
 
 };
 
