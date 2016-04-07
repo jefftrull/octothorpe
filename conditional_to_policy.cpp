@@ -540,14 +540,15 @@ int main(int argc, char const **argv) {
 
     // apply all replacements to original source file
     // (code from RefactoringTool::runAndSave)
-    LangOptions DefaultLangOptions;
-    IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
-    TextDiagnosticPrinter tdp(llvm::errs(), &*DiagOpts);
+    IntrusiveRefCntPtr<DiagnosticOptions> diag_opts = new DiagnosticOptions();
+    TextDiagnosticPrinter tdp(llvm::errs(), &*diag_opts);
     DiagnosticsEngine diagnostics(
         IntrusiveRefCntPtr<DiagnosticIDs>(new DiagnosticIDs()),
-        &*DiagOpts, &tdp, false);
+        &*diag_opts, &tdp, false);
     FileManager fm{FileSystemOptions()};
     SourceManager sources(diagnostics, fm);
+
+    LangOptions DefaultLangOptions;
     Rewriter rewriter(sources, DefaultLangOptions);
     if (!tooling::applyAllReplacements(replacements, rewriter)) {
         std::cerr << "rewriting of source file failed\n";
