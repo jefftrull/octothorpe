@@ -60,11 +60,10 @@ void print_decorated_source_range(std::ostream& os, clang::SourceManager const* 
     os << "\n===========\n";
 }
 
-// BOZO needs a better name
 template<bool Sense>    // whether to find ranges where the symbols is defined
-struct MyCallbacks : clang::PPCallbacks
+struct PPActions : clang::PPCallbacks
 {
-    MyCallbacks(clang::LangOptions lopt,
+    PPActions(clang::LangOptions lopt,
                 clang::SourceManager & sm,
                 std::string mname,
                 std::vector<clang::SourceRange>& cond_ranges)
@@ -186,18 +185,18 @@ private:
 
 
 template<bool Sense>
-struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
+struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 {
-    PPCallbacksInstaller(std::string mname,
-                         std::vector<clang::SourceRange>& source_ranges,
-                         std::vector<std::experimental::optional<CondRange>>& cond_ranges,
-                         RangeNodes<clang::Decl> const& decls,
-                         RangeNodes<clang::Stmt> const& stmts,
-                         clang::tooling::Replacements* replace)
+    SourceFileHooks(std::string mname,
+                    std::vector<clang::SourceRange>& source_ranges,
+                    std::vector<std::experimental::optional<CondRange>>& cond_ranges,
+                    RangeNodes<clang::Decl> const& decls,
+                    RangeNodes<clang::Stmt> const& stmts,
+                    clang::tooling::Replacements* replace)
         : mname_(mname), source_ranges_(source_ranges), cond_ranges_(cond_ranges),
           ci_(nullptr), decls_(decls), stmts_(stmts), replace_(replace) {}
 
-    ~PPCallbacksInstaller() override {}
+    ~SourceFileHooks() override {}
 
     bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
         ci_ = &ci;
@@ -205,8 +204,8 @@ struct PPCallbacksInstaller : clang::tooling::SourceFileCallbacks
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
-            llvm::make_unique<MyCallbacks<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
-                                                  mname_, source_ranges_));
+            llvm::make_unique<PPActions<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
+                                                mname_, source_ranges_));
         return true;
     }
 
@@ -430,8 +429,8 @@ int FindConditionalNodes(char const ** argv,
     RangeNodes<Stmt>                 stmts;
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
-    PPCallbacksInstaller<Sense>      ppci(mname, source_ranges, cond_ranges,
-                                          decls, stmts, &replacements);
+    SourceFileHooks<Sense>           source_hooks(mname, source_ranges, cond_ranges,
+                                                  decls, stmts, &replacements);
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
@@ -450,7 +449,7 @@ int FindConditionalNodes(char const ** argv,
 
     std::cout << "Conditional source ranges for when FOO is ";
     std::cout << (Sense ? "defined" : "not defined") << ":\n";
-    if (int result = tool.run(newFrontendActionFactory(&finder, &ppci).get())) {
+    if (int result = tool.run(newFrontendActionFactory(&finder, &source_hooks).get())) {
         return result;
     }
 
