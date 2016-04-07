@@ -457,6 +457,30 @@ int FindConditionalNodes(char const ** argv,
         return result;
     }
 
+    if (!Sense) {
+        // choose a specialization
+        std::string choose_condition("#ifdef ");
+        choose_condition += (mname + "\n");
+        choose_condition += ("    using " + mname + "_t = " + mname + "_class<true>;\n");
+        choose_condition += "#else\n";
+        choose_condition += ("    using " + mname + "_t = " + mname + "_class<false>;\n");
+        choose_condition += "#endif\n";
+        replacements.insert(Replacement(comp_file_list[0], 0, 0, choose_condition));
+    }
+
+    // remember the types that were defined in this condition
+    // we could in the future match them up only by range, but in this case we will
+    // accept any definition of the same type name wherever it appears
+    typedefs.resize(decls.size());
+    for( std::size_t i = 0; i < decls.size(); ++i) {
+        for( auto decl : decls[i] ) {
+            if (clang::TypedefDecl const* td = llvm::dyn_cast<clang::TypedefDecl>(decl)) {
+                typedefs[i].insert(td->getName());
+            } else if (auto ud = llvm::dyn_cast<clang::UsingDecl>(decl)) {
+                typedefs[i].insert(ud->getName());
+            }
+        }
+    }
 
     return 0;
 }
@@ -490,6 +514,28 @@ int main(int argc, char const **argv) {
     if (int result = FindConditionalNodes<false>(argv, cond_ranges_undefined, typedefs_undefined, replacements)) {
         return result;
     }
+
+    // if any conditional regions have matching (in name) type declarations,
+    // replace with a single one referring to the chosen specialization
+    for (std::size_t i = 0; i < cond_ranges_defined.size(); ++i) {
+        if (!cond_ranges_defined[i] || !cond_ranges_undefined[i]) {
+            continue;
+        }
+        CondLocation start = std::min(cond_ranges_defined[i]->getBegin(),
+                                      cond_ranges_undefined[i]->getBegin());
+
+        std::vector<std::string> common_types;
+        std::set_intersection(typedefs_defined[i].begin(), typedefs_defined[i].end(),
+                              typedefs_undefined[i].begin(), typedefs_undefined[i].end(),
+                              std::back_inserter(common_types));
+        
+        std::string mname(argv[1]);
+        for ( auto const & t : common_types ) {
+            std::string tdef("    using " + t + " = " + mname + "_t::" + t + ";\n");
+            replacements.insert(tooling::Replacement(start.getFilename(), start.getFileOffset(),
+                                                     0, tdef));
+        }
+    }    
 
     std::cerr << "replacements:\n";
     for ( auto const& rep : replacements ) {
