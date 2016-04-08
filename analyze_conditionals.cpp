@@ -30,9 +30,6 @@
 // specialization of position_token with underlying iterator and
 // possible token values specified
 
-// Observation: the grammars do not use their Lexer template parameter!
-// Only DefTokens does
-// Maybe we can try defining a grammar this way
 template<typename CharIterator>
 struct spirit_cpp_lexer {
     typedef boost::wave::cpplexer::lex_token<> token_type;
@@ -67,9 +64,40 @@ private:
     boost::wave::cpplexer::lex_token<> base_token_;
 };
 
-// also need to adapt lex_iterator<token_type> to produce an iterator
-// over our wrapped token type
+// Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
+// requires adding a special typedef and returning Spirit-compatible tokens
+template<typename BaseIterator>
+struct tok_iterator :
+    boost::iterator_adaptor<tok_iterator<BaseIterator>,
+                            BaseIterator,
+                            spirit_compatible_token,        // value type
+                            std::forward_iterator_tag,      // category we expect
+                            spirit_compatible_token const&> // reference type
+{
+    // add the typedef that qi::token requires
+    using base_iterator_type = BaseIterator;
 
+    tok_iterator(BaseIterator it) : tok_iterator::iterator_adaptor_(it) {}
+
+private:
+    friend class boost::iterator_core_access;
+
+    spirit_compatible_token const& dereference() const {
+        result_ = spirit_compatible_token(
+            *tok_iterator::iterator_adaptor_::base_reference());
+        return result_;
+    }
+
+    spirit_compatible_token mutable result_;
+};
+
+template<typename BaseIterator>
+tok_iterator<BaseIterator>
+make_tok_iterator(BaseIterator it) {
+    return tok_iterator<BaseIterator>(it);
+}
+
+// Define a simple grammar using the above
 template<typename Iterator>
 struct cond_grammar : boost::spirit::qi::grammar<Iterator>
 {
@@ -82,40 +110,6 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator>
 private:
     boost::spirit::qi::rule<Iterator> start;
 };
-
-// class to convert underlying cpplexer tokens to Spirit V2-compatible tokens
-// we do this instead of a lambda because our iterator must return references
-// to be forward category, which is required by Spirit
-struct tok_transformer
-{
-    spirit_compatible_token const& operator()(boost::wave::cpplexer::lex_token<> const& tok) const
-    {
-        result_ = spirit_compatible_token(tok);
-        return result_;
-    }
-private:
-    spirit_compatible_token mutable result_;   // BOZO don't like this, need a better solution
-};
-
-template<typename BaseIterator>
-struct tok_iterator :
-    boost::iterator_adaptor<tok_iterator<BaseIterator>,
-                            boost::transform_iterator<tok_transformer, BaseIterator>>
-{
-    // add a typedef qi::token requires
-    using base_iterator_type = BaseIterator;
-
-    // forward constructor to parent
-    tok_iterator(BaseIterator it, tok_transformer t)
-        : tok_iterator::iterator_adaptor_(
-            typename tok_iterator::iterator_adaptor::base_type(it, t)) {}
-};
-
-template<typename BaseIterator>
-tok_iterator<BaseIterator>
-make_tok_iterator(BaseIterator it, tok_transformer t) {
-    return tok_iterator<BaseIterator>(it, t);
-}
 
 int main() {
     using namespace std;
@@ -142,16 +136,15 @@ int main() {
                                language_support(support_cpp|support_cpp0x));
     lexer_t::iterator_type end;
 
-    tok_transformer transformer;
-    auto xbeg = make_tok_iterator(beg, transformer);
-    auto xend = make_tok_iterator(end, transformer);
+    auto xbeg = make_tok_iterator(beg);
+    auto xend = make_tok_iterator(end);
     cond_grammar<decltype(xbeg)> myparser;
     bool result = boost::spirit::qi::parse(xbeg, xend, myparser);
     if (result) {
         std::cout << "parse successful\n";
-        if (xbeg == make_tok_iterator(beg, transformer)) {
+        if (xbeg == make_tok_iterator(beg)) {
             std::cout << "no input consumed!\n";
-        } else if (xbeg == make_tok_iterator(end, transformer)) {
+        } else if (xbeg == make_tok_iterator(end)) {
             std::cout << "all input consumed!\n";
         } else {
             std::cout << "some input consumed\n";
