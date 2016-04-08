@@ -62,6 +62,7 @@ set( CLANG_AST_LIBS
         ${LLVM_SYSLIBS}
 )
 
+set( Boost_USE_STATIC_LIBS ON )
 find_package( Boost 1.60 REQUIRED COMPONENTS system wave thread filesystem )
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 
@@ -83,3 +84,7 @@ set_target_properties( c2p PROPERTIES
   LINK_FLAGS "${LLVM_LDFLAGS}"
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
+
+# Boost.Wave (lexer) example
+add_executable( ac analyze_conditionals.cpp )
+target_link_libraries( ac ${Boost_LIBRARIES} )
