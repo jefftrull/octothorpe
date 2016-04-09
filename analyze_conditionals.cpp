@@ -19,6 +19,7 @@
 
 #include <boost/spirit/include/lex_lexertl.hpp>
 #include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix.hpp>
 
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
@@ -119,16 +120,19 @@ make_tok_iterator(BaseIterator it) {
 
 // Define a simple grammar using the above
 template<typename Iterator>
-struct cond_grammar : boost::spirit::qi::grammar<Iterator>
+struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string()>
 {
     cond_grammar()
         : cond_grammar::base_type(start) {
-        using namespace boost::spirit::qi;
+        using boost::spirit::_1;
+        using boost::spirit::_val;
+        using boost::spirit::qi::token;
         using namespace boost::wave;
-        start = token(T_PP_IFDEF) >> token(T_SPACE) >> token(T_IDENTIFIER) >> token(T_NEWLINE);
+        start = token(T_PP_IFDEF) >> token(T_SPACE) >> ident[_val = _1] >> token(T_NEWLINE);
+        ident = token(T_IDENTIFIER);
     }
 private:
-    boost::spirit::qi::rule<Iterator> start;
+    boost::spirit::qi::rule<Iterator, std::string()> start;
     boost::spirit::qi::rule<Iterator, std::string()> ident;
 };
 
@@ -160,9 +164,11 @@ int main() {
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
     cond_grammar<decltype(xbeg)> myparser;
-    bool result = boost::spirit::qi::parse(xbeg, xend, myparser);
-    if (result) {
+    std::string result;
+    bool pass = boost::spirit::qi::parse(xbeg, xend, myparser, result);
+    if (pass) {
         std::cout << "parse successful\n";
+        std::cout << "collected identifier " << result << "\n";
         if (xbeg == make_tok_iterator(beg)) {
             std::cout << "no input consumed!\n";
         } else if (xbeg == make_tok_iterator(end)) {
