@@ -18,10 +18,7 @@
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 
 #include <boost/spirit/include/lex_lexertl.hpp>
-
 #include <boost/spirit/include/qi.hpp>
-
-#include <boost/iterator/transform_iterator.hpp>
 
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
@@ -60,9 +57,30 @@ struct spirit_compatible_token {
     spirit_compatible_token(boost::wave::cpplexer::lex_token<> base_token)
         : base_token_(base_token) {}
     spirit_compatible_token() {}
+
+    std::string value() const {
+        return base_token_.get_value().c_str();
+    }
+
 private:
     boost::wave::cpplexer::lex_token<> base_token_;
 };
+
+// Let Spirit know how to get data from our token into attributes
+namespace boost { namespace spirit { namespace traits
+{
+// a specialization for our token - only for std::string.  Possible to generalize...
+template <>
+struct assign_to_container_from_value<std::string, spirit_compatible_token>
+{
+    static void 
+    call(spirit_compatible_token const& tok, std::string& attr)
+    {
+        attr = tok.value();
+    }
+};
+
+}}}
 
 // Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
 // requires adding a special typedef and returning Spirit-compatible tokens
@@ -75,7 +93,9 @@ struct tok_iterator :
                             spirit_compatible_token const&> // reference type
 {
     // add the typedef that qi::token requires
-    using base_iterator_type = BaseIterator;
+    // this is actually the really really underlying one, i.e. character
+    // not just the one we are wrapping here
+    using base_iterator_type = typename BaseIterator::token_type::string_type::const_iterator;
 
     tok_iterator(BaseIterator it) : tok_iterator::iterator_adaptor_(it) {}
 
@@ -109,6 +129,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator>
     }
 private:
     boost::spirit::qi::rule<Iterator> start;
+    boost::spirit::qi::rule<Iterator, std::string()> ident;
 };
 
 int main() {
