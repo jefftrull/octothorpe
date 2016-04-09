@@ -12,14 +12,14 @@
 #include <iostream>
 #include <iomanip>
 
+#include <boost/spirit/include/lex_lexertl.hpp>
+#include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix.hpp>
+
 #include <boost/wave.hpp>
 #include <boost/wave/token_ids.hpp>
 #include <boost/wave/cpplexer/cpp_lex_token.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-
-#include <boost/spirit/include/lex_lexertl.hpp>
-#include <boost/spirit/include/qi.hpp>
-#include <boost/spirit/include/phoenix.hpp>
 
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
@@ -63,8 +63,26 @@ struct spirit_compatible_token {
         return base_token_.get_value().c_str();
     }
 
+    operator bool() const {
+        // This is for BOOST_SPIRIT_DEBUG.  I *think* what it needs is a "not EOF" flag
+        return !base_token_.is_eoi();
+    }
+
 private:
     boost::wave::cpplexer::lex_token<> base_token_;
+
+    friend std::ostream&
+    operator<< (std::ostream &os, spirit_compatible_token const& tok) {
+        using namespace boost::wave;
+        auto id = token_id(tok.base_token_);
+        os << get_token_name(id) << "(";
+        if (id == T_NEWLINE) {
+            os << "\n";
+        } else {
+            os << tok.value();
+        }
+        return os;
+    }
 };
 
 // Let Spirit know how to get data from our token into attributes
@@ -120,20 +138,74 @@ make_tok_iterator(BaseIterator it) {
 
 // Define a simple grammar using the above
 template<typename Iterator>
-struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string()>
+struct skipper : boost::spirit::qi::grammar<Iterator>
+{
+    skipper() : skipper::base_type(spaces) {
+        spaces = +boost::spirit::qi::token(boost::wave::T_SPACE);
+    }
+private:
+    boost::spirit::qi::rule<Iterator> spaces;
+};
+
+template<typename Iterator>
+struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skipper<Iterator>>
 {
     cond_grammar()
-        : cond_grammar::base_type(start) {
+        : cond_grammar::base_type(tunit) {
         using boost::spirit::_1;
         using boost::spirit::_val;
         using boost::spirit::qi::token;
         using namespace boost::wave;
-        start = token(T_PP_IFDEF) >> token(T_SPACE) >> ident[_val = _1] >> token(T_NEWLINE);
+
+        line_end = token(T_NEWLINE) | token(T_CPPCOMMENT) ;  // Wave absorbs trailing \n
+
         ident = token(T_IDENTIFIER);
+        textline = (!(token(T_PP_IF) |
+                      token(T_PP_IFDEF) |
+                      token(T_PP_IFNDEF) |
+                      token(T_PP_ELSE) |
+                      token(T_PP_ELIF) |
+                      token(T_PP_ENDIF))) >> *(token - line_end) >> line_end ;
+
+        cond_expr = +(token(T_LEFTPAREN) | token(T_RIGHTPAREN) | token(T_IDENTIFIER) |
+            token(T_EQUAL) | token(T_LESS) | token(T_LESSEQUAL) | token(T_GREATEREQUAL) |
+                      token(T_OR) | token(T_AND) | token(T_NOT)) ;
+
+        cond_if = token(T_PP_IF) >> cond_expr >> line_end
+            >>    *basic
+            >>    *(token(T_PP_ELIF) >> cond_expr >> line_end >> *basic)
+            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+            >>    token(T_PP_ENDIF) >> line_end ;
+
+        cond_ifdef = token(T_PP_IFDEF) >> ident >> line_end
+            >>    *basic
+            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+            >>    token(T_PP_ENDIF) >> line_end ;
+
+        cond_ifndef = token(T_PP_IFNDEF) >> ident >> line_end
+            >>    *basic
+            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+            >>    token(T_PP_ENDIF) >> line_end ;
+
+        basic = textline | cond_if | cond_ifdef | cond_ifndef;
+        tunit = *basic >> token(T_EOF) ;
+
+        // BOZO add nesting
+
+        BOOST_SPIRIT_DEBUG_NODE(tunit);
+        BOOST_SPIRIT_DEBUG_NODE(ident);
+        BOOST_SPIRIT_DEBUG_NODE(textline);
+        BOOST_SPIRIT_DEBUG_NODE(cond_expr);
+        BOOST_SPIRIT_DEBUG_NODE(cond_if);
+        BOOST_SPIRIT_DEBUG_NODE(cond_ifdef);
+        BOOST_SPIRIT_DEBUG_NODE(cond_ifndef);
+
     }
 private:
-    boost::spirit::qi::rule<Iterator, std::string()> start;
-    boost::spirit::qi::rule<Iterator, std::string()> ident;
+    using string_rule_t = boost::spirit::qi::rule<Iterator, std::string(), skipper<Iterator>>;
+    string_rule_t tunit, basic, ident, textline, cond_expr, cond_if, cond_ifdef, cond_ifndef;
+    boost::spirit::qi::rule<Iterator> line_end;
+
 };
 
 int main() {
@@ -148,13 +220,13 @@ int main() {
         "#else\n"
         "using string_t = char*;\n"
         "#endif\n"
-        "#if !defined(FOO)"
+        "#if !defined(FOO)\n"
         "using string_t = QString;  // dead code\n"
         "#endif\n"
         "#endif\n"
         );
 
-    // give it a try
+    // Give it a try
     using lexer_t = spirit_cpp_lexer<string::const_iterator>;
     lexer_t::token_type::position_type pos("testprog.cpp");
     lexer_t::iterator_type beg(testprog.begin(), testprog.end(), pos,
@@ -164,20 +236,21 @@ int main() {
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
     cond_grammar<decltype(xbeg)> myparser;
-    std::string result;
-    bool pass = boost::spirit::qi::parse(xbeg, xend, myparser, result);
+    string result;
+    bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, myparser,
+                                                skipper<decltype(xbeg)>(), result);
     if (pass) {
-        std::cout << "parse successful\n";
-        std::cout << "collected identifier " << result << "\n";
+        cout << "parse successful\n";
         if (xbeg == make_tok_iterator(beg)) {
-            std::cout << "no input consumed!\n";
+            cout << "no input consumed!\n";
         } else if (xbeg == make_tok_iterator(end)) {
-            std::cout << "all input consumed!\n";
+            cout << "all input consumed!\n";
         } else {
-            std::cout << "some input consumed\n";
+            cout << "some input consumed. Remaining:\n";
+            copy(xbeg, xend, ostream_iterator<spirit_compatible_token>(cout, ""));
         }
     } else {
-        std::cout << "parse failed\n";
+        cout << "parse failed\n";
     }
 
 }

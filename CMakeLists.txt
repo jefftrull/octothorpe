@@ -85,6 +85,9 @@ set_target_properties( c2p PROPERTIES
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
 
+# In case of emergency, uncomment:
+# add_definitions( -DBOOST_SPIRIT_DEBUG )
+
 # Boost.Wave (lexer) example
 add_executable( ac analyze_conditionals.cpp )
 target_link_libraries( ac ${Boost_LIBRARIES} )
