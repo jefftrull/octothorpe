@@ -81,10 +81,11 @@ private:
         auto id = token_id(tok.base_token_);
         os << get_token_name(id) << "(";
         if (id == T_NEWLINE) {
-            os << "\n";
+            os << "\\n";
         } else {
             os << tok.value();
         }
+        os << ")" ;
         return os;
     }
 };
