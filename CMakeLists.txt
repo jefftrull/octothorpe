@@ -97,13 +97,17 @@ else()
   if( NOT CVC4_LIB )
     message( FATAL_ERROR "Cannot find the CVC4 library within ${CVC4_ROOT}/lib; did you compile it?" )
   endif()
+  find_library( GMP_LIB gmp )
+  if( NOT GMP_LIB )
+    message( FATAL_ERROR "The GMP library is required for building preprocessor conditional analysis" )
+  endif()
 
   # Boost.Wave (lexer) example
   add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
   add_executable( ac analyze_conditionals.cpp )
   set_target_properties( ac PROPERTIES
     # COMPILE_DEFINITIONS -DBOOST_SPIRIT_DEBUG # Uncomment in case of emergency
-    LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB}"
+    LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB};${GMP_LIB}"
   )
   target_include_directories( ac SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
   
