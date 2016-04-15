@@ -49,6 +49,9 @@ struct spirit_cpp_lexer {
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
 struct spirit_compatible_token {
+    typedef boost::wave::cpplexer::lex_token<>::string_type base_string_t;
+    typedef base_string_t::const_iterator base_string_iter_t;
+
     // requirements from Spirit V2
     typedef boost::wave::token_id id_type;
     id_type id() const {
@@ -59,8 +62,9 @@ struct spirit_compatible_token {
         : base_token_(base_token) {}
     spirit_compatible_token() {}
 
-    std::string value() const {
-        return base_token_.get_value().c_str();
+    boost::iterator_range<base_string_t::const_iterator> value() const {
+        return boost::iterator_range<base_string_iter_t>(base_token_.get_value().begin(),
+                                                         base_token_.get_value().end());
     }
 
     operator bool() const {
@@ -88,12 +92,14 @@ private:
 // Let Spirit know how to get data from our token into attributes
 namespace boost { namespace spirit { namespace traits
 {
-// a specialization for our token - only for std::string.  Possible to generalize...
-template <>
-struct assign_to_container_from_value<std::string, spirit_compatible_token>
+template<>
+struct assign_to_container_from_value<
+    boost::iterator_range<spirit_compatible_token::base_string_iter_t>,
+    spirit_compatible_token>
 {
     static void 
-    call(spirit_compatible_token const& tok, std::string& attr)
+    call(spirit_compatible_token const& tok,
+         boost::iterator_range<spirit_compatible_token::base_string_iter_t>& attr)
     {
         attr = tok.value();
     }
