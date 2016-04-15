@@ -163,6 +163,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
     cond_grammar()
         : cond_grammar::base_type(tunit) {
         using boost::spirit::_1;
+        using boost::spirit::_3;
         using boost::spirit::_val;
         using boost::spirit::_pass;
         using boost::spirit::qi::token;
@@ -188,8 +189,10 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
                 >> token(T_IDENTIFIER) [_val = phx::bind(&cond_grammar::create_defined_expr,
                                                          this, _1)]
                 >> token(T_RIGHTPAREN) ;
-        paren_term = token(T_LEFTPAREN) >> bool_expr >> token(T_RIGHTPAREN) ;
-        bool_term = cond_inv | defined | omit[paren_term] ;
+        paren_term = token(T_LEFTPAREN)
+            >> bool_expr  [_val = _1]
+            >> token(T_RIGHTPAREN) ;
+        bool_term = cond_inv | defined | paren_term ;
 
         conj_term = bool_term [ _val = _1 ]
             >> *(token(T_ANDAND) >> bool_term [
@@ -202,19 +205,33 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
 
         // parsing a subset of real expressions here, for now
         // we only compare ints, never compute with them
-        int_term = token(T_IDENTIFIER) | token(T_INTLIT) ;
+        int_term = token(T_IDENTIFIER)[_val = phx::bind(&cond_grammar::create_integer_var,
+                                                        this, _1)]
+                     | token(T_INTLIT)[_val = phx::bind(&cond_grammar::create_integer_const,
+                                                        this, _1)] ;
 
-        int_comp = (int_term >> token(T_EQUAL) >> int_term)
-            |  (int_term >> token(T_LESS) >> int_term)
-            |  (int_term >> token(T_GREATER) >> int_term)
-            |  (int_term >> token(T_LESSEQUAL) >> int_term)
-            |  (int_term >> token(T_GREATEREQUAL) >> int_term) ;
+        int_comp =
+            (int_term >> token(T_EQUAL) >> int_term) [
+                _val = phx::bind(&cond_grammar::create_binary_expr,
+                                 this, CVC4::kind::EQUAL, _1, _3) ]
+          | (int_term >> token(T_LESS) >> int_term) [
+                _val = phx::bind(&cond_grammar::create_binary_expr,
+                                 this, CVC4::kind::LT, _1, _3) ]
+          | (int_term >> token(T_GREATER) >> int_term) [
+                _val = phx::bind(&cond_grammar::create_binary_expr,
+                                 this, CVC4::kind::GT, _1, _3) ]
+          | (int_term >> token(T_LESSEQUAL) >> int_term) [
+                _val = phx::bind(&cond_grammar::create_binary_expr,
+                                 this, CVC4::kind::LEQ, _1, _3) ]
+          | (int_term >> token(T_GREATEREQUAL) >> int_term) [
+                _val = phx::bind(&cond_grammar::create_binary_expr,
+                                 this, CVC4::kind::GEQ, _1, _3) ] ;
 
-        bool_expr = int_comp | omit[disj_term] ;
+        bool_expr = int_comp | disj_term ;
 
-        cond_if = token(T_PP_IF) >> bool_expr >> line_end
+        cond_if = token(T_PP_IF) >> omit[bool_expr] >> line_end
             >>    *basic
-            >>    *(token(T_PP_ELIF) >> bool_expr >> line_end >> *basic)
+            >>    *(token(T_PP_ELIF) >> omit[bool_expr] >> line_end >> *basic)
             >>    -(token(T_PP_ELSE) >> line_end >> *basic)
             >>    token(T_PP_ENDIF) >> line_end ;
 
@@ -254,10 +271,10 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
     }
 private:
     using string_rule_t = boost::spirit::qi::rule<Iterator, std::string(), skipper<Iterator>>;
-    string_rule_t tunit, basic, ident, textline, paren_term, int_term, int_comp, bool_expr, cond_if, cond_ifdef, cond_ifndef;
+    string_rule_t tunit, basic, ident, textline, cond_if, cond_ifdef, cond_ifndef;
     boost::spirit::qi::rule<Iterator> line_end;
     using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::Expr(), skipper<Iterator>>;
-    expr_rule_t defined, cond_inv, bool_term, conj_term, disj_term;
+    expr_rule_t defined, cond_inv, bool_term, conj_term, disj_term, int_term, int_comp, paren_term, bool_expr;
 
     // for building logical expressions
     CVC4::ExprManager em_;
@@ -273,6 +290,14 @@ private:
         return em_.mkExpr(op, e1, e2);
     }
 
+    // for building integer expressions
+    CVC4::Expr   create_integer_var(boost::iterator_range<const char*> varname) {
+        return em_.mkVar(std::string(varname.begin(), varname.end()),
+                         em_.integerType());
+    }
+    CVC4::Expr   create_integer_const(boost::iterator_range<const char*> varname) {
+        return em_.mkConst(CVC4::Rational(std::string(varname.begin(), varname.end())));
+    }
 
 };
 
@@ -288,7 +313,7 @@ int main() {
         "#else\n"
         "using string_t = char*;\n"
         "#endif\n"
-        "#if !defined(FOO) || defined(BAR)\n"
+        "#if !defined(FOO) || (BAR > 10)\n"
         "using string_t = QString;  // dead code\n"
         "#endif\n"
         "#endif\n"
