@@ -161,6 +161,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
         : cond_grammar::base_type(tunit) {
         using boost::spirit::_1;
         using boost::spirit::_val;
+        using boost::spirit::_pass;
         using boost::spirit::qi::token;
         using namespace boost::wave;
 
@@ -174,13 +175,32 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
                       token(T_PP_ELIF) |
                       token(T_PP_ENDIF))) >> *(token - line_end) >> line_end ;
 
-        cond_expr = +(token(T_LEFTPAREN) | token(T_RIGHTPAREN) | token(T_IDENTIFIER) |
-            token(T_EQUAL) | token(T_LESS) | token(T_LESSEQUAL) | token(T_GREATEREQUAL) |
-                      token(T_OR) | token(T_AND) | token(T_NOT)) ;
+        cond_inv = ( token(T_NOT) >> bool_term ) ;
+        defined =  token(T_IDENTIFIER) [_pass = ( _1 == std::string("defined") )]
+                >> token(T_LEFTPAREN)
+                >> token(T_IDENTIFIER)
+                >> token(T_RIGHTPAREN) ;
+        paren_term = token(T_LEFTPAREN) >> bool_expr >> token(T_RIGHTPAREN) ;
+        bool_term = cond_inv | defined | paren_term ;
 
-        cond_if = token(T_PP_IF) >> cond_expr >> line_end
+        conj_term = bool_term >> *(token(T_AND) >> bool_term) ;
+        disj_term = conj_term >> *(token(T_OR) >> conj_term) ;
+
+        // parsing a subset of real expressions here, for now
+        // we only compare ints, never compute with them
+        int_term = token(T_IDENTIFIER) | token(T_INTLIT) ;
+
+        int_comp = (int_term >> token(T_EQUAL) >> int_term)
+            |  (int_term >> token(T_LESS) >> int_term)
+            |  (int_term >> token(T_GREATER) >> int_term)
+            |  (int_term >> token(T_LESSEQUAL) >> int_term)
+            |  (int_term >> token(T_GREATEREQUAL) >> int_term) ;
+
+        bool_expr = int_comp | disj_term ;
+
+        cond_if = token(T_PP_IF) >> bool_expr >> line_end
             >>    *basic
-            >>    *(token(T_PP_ELIF) >> cond_expr >> line_end >> *basic)
+            >>    *(token(T_PP_ELIF) >> bool_expr >> line_end >> *basic)
             >>    -(token(T_PP_ELSE) >> line_end >> *basic)
             >>    token(T_PP_ENDIF) >> line_end ;
 
@@ -197,12 +217,22 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
         basic = textline | cond_if | cond_ifdef | cond_ifndef;
         tunit = *basic >> token(T_EOF) ;
 
-        // BOZO add nesting
-
         BOOST_SPIRIT_DEBUG_NODE(tunit);
+        BOOST_SPIRIT_DEBUG_NODE(basic);
         BOOST_SPIRIT_DEBUG_NODE(ident);
         BOOST_SPIRIT_DEBUG_NODE(textline);
-        BOOST_SPIRIT_DEBUG_NODE(cond_expr);
+
+        BOOST_SPIRIT_DEBUG_NODE(defined);
+        BOOST_SPIRIT_DEBUG_NODE(bool_term);
+        BOOST_SPIRIT_DEBUG_NODE(paren_term);
+        BOOST_SPIRIT_DEBUG_NODE(cond_inv);
+        BOOST_SPIRIT_DEBUG_NODE(int_term);
+        BOOST_SPIRIT_DEBUG_NODE(int_comp);
+        BOOST_SPIRIT_DEBUG_NODE(conj_term);
+        BOOST_SPIRIT_DEBUG_NODE(disj_term);
+
+
+        BOOST_SPIRIT_DEBUG_NODE(bool_expr);
         BOOST_SPIRIT_DEBUG_NODE(cond_if);
         BOOST_SPIRIT_DEBUG_NODE(cond_ifdef);
         BOOST_SPIRIT_DEBUG_NODE(cond_ifndef);
@@ -210,7 +240,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
     }
 private:
     using string_rule_t = boost::spirit::qi::rule<Iterator, std::string(), skipper<Iterator>>;
-    string_rule_t tunit, basic, ident, textline, cond_expr, cond_if, cond_ifdef, cond_ifndef;
+    string_rule_t tunit, basic, ident, textline, defined, bool_term, paren_term, cond_inv, int_term, int_comp, conj_term, disj_term, bool_expr, cond_if, cond_ifdef, cond_ifndef;
     boost::spirit::qi::rule<Iterator> line_end;
 
 };
