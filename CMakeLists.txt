@@ -85,9 +85,26 @@ set_target_properties( c2p PROPERTIES
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
 
-# In case of emergency, uncomment:
-# add_definitions( -DBOOST_SPIRIT_DEBUG )
+# Conditional compilation analysis of whole text example, using Boost.Wave and SMT 
+# Requires CVC4
 
-# Boost.Wave (lexer) example
-add_executable( ac analyze_conditionals.cpp )
-target_link_libraries( ac ${Boost_LIBRARIES} )
+# User is supposed to have supplied CVC4_ROOT on the CMake command line with -D
+set( CVC4_ROOT "" CACHE PATH "Path to the CVC4 build" )
+if( "${CVC4_ROOT}" STREQUAL "" )
+  message( WARNING "No value provided for CVC4_ROOT; the ac executable will not be built" )
+else()
+  find_library( CVC4_LIB cvc4 ${CVC4_ROOT}/lib )
+  if( NOT CVC4_LIB )
+    message( FATAL_ERROR "Cannot find the CVC4 library within ${CVC4_ROOT}/lib; did you compile it?" )
+  endif()
+
+  # Boost.Wave (lexer) example
+  add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
+  add_executable( ac analyze_conditionals.cpp )
+  set_target_properties( ac PROPERTIES
+    # COMPILE_DEFINITIONS -DBOOST_SPIRIT_DEBUG # Uncomment in case of emergency
+    LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB}"
+  )
+  target_include_directories( ac SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
+  
+endif()

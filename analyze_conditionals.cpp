@@ -21,6 +21,9 @@
 #include <boost/wave/cpplexer/cpp_lex_token.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 
+// CVC4 SMT engine includes
+#include "cvc4/smt/smt_engine.h"
+
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
 
@@ -163,6 +166,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
         using boost::spirit::_val;
         using boost::spirit::_pass;
         using boost::spirit::qi::token;
+        using boost::spirit::qi::omit;
+        namespace phx = boost::phoenix;
         using namespace boost::wave;
 
         line_end = token(T_NEWLINE) | token(T_CPPCOMMENT) ;  // Wave absorbs trailing \n
@@ -178,10 +183,11 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
         cond_inv = ( token(T_NOT) >> bool_term ) ;
         defined =  token(T_IDENTIFIER) [_pass = ( _1 == std::string("defined") )]
                 >> token(T_LEFTPAREN)
-                >> token(T_IDENTIFIER)
+                >> token(T_IDENTIFIER) [_val = phx::bind(&cond_grammar::create_defined_expr,
+                                                         this, _1)]
                 >> token(T_RIGHTPAREN) ;
         paren_term = token(T_LEFTPAREN) >> bool_expr >> token(T_RIGHTPAREN) ;
-        bool_term = cond_inv | defined | paren_term ;
+        bool_term = cond_inv | omit[defined] | paren_term ;
 
         conj_term = bool_term >> *(token(T_AND) >> bool_term) ;
         disj_term = conj_term >> *(token(T_OR) >> conj_term) ;
@@ -240,8 +246,22 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
     }
 private:
     using string_rule_t = boost::spirit::qi::rule<Iterator, std::string(), skipper<Iterator>>;
-    string_rule_t tunit, basic, ident, textline, defined, bool_term, paren_term, cond_inv, int_term, int_comp, conj_term, disj_term, bool_expr, cond_if, cond_ifdef, cond_ifndef;
+    string_rule_t tunit, basic, ident, textline, bool_term, paren_term, cond_inv, int_term, int_comp, conj_term, disj_term, bool_expr, cond_if, cond_ifdef, cond_ifndef;
     boost::spirit::qi::rule<Iterator> line_end;
+    using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::Expr(), skipper<Iterator>>;
+    expr_rule_t defined;
+
+    // for building logical expressions
+    CVC4::ExprManager em_;
+    CVC4::Expr   create_defined_expr(boost::iterator_range<const char*> varname) {
+        std::string varstr(varname.begin(), varname.end());
+        varstr += "_defined" ;
+        return em_.mkVar(varstr, em_.booleanType());
+    }
+    CVC4::Expr   create_inverted_expr(CVC4::Expr e) {
+        return em_.mkExpr(CVC4::kind::NOT, e);
+    }
+
 
 };
 
