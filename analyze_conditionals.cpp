@@ -15,6 +15,7 @@
 #include <boost/spirit/include/lex_lexertl.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
+#include <boost/fusion/include/adapt_struct.hpp>
 
 #include <boost/wave.hpp>
 #include <boost/wave/token_ids.hpp>
@@ -146,7 +147,19 @@ make_tok_iterator(BaseIterator it) {
     return tok_iterator<BaseIterator>(it);
 }
 
-// Define a simple grammar using the above
+// Parsing will produce text "sections": a set of lines and an associated condition
+struct text_section {
+    CVC4::Expr               condition;
+    std::vector<std::string> body;
+};
+
+BOOST_FUSION_ADAPT_STRUCT(
+    text_section,
+    (CVC4::Expr, condition)
+    (std::vector<std::string>, body)
+)
+
+// Define a simple grammar using our adapted token iterator
 template<typename Iterator>
 struct skipper : boost::spirit::qi::grammar<Iterator>
 {
@@ -158,16 +171,23 @@ private:
 };
 
 template<typename Iterator>
-struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skipper<Iterator>>
+struct cond_grammar : boost::spirit::qi::grammar<Iterator,
+                                                 std::vector<text_section>(),
+                                                 skipper<Iterator>>
 {
     cond_grammar()
         : cond_grammar::base_type(tunit) {
         using boost::spirit::_1;
         using boost::spirit::_3;
+        using boost::spirit::_a;
+        using boost::spirit::_b;
+        using boost::spirit::_r1;
         using boost::spirit::_val;
         using boost::spirit::_pass;
         using boost::spirit::qi::token;
         using boost::spirit::qi::omit;
+        using boost::spirit::qi::attr;
+        using boost::spirit::qi::eps;
         namespace phx = boost::phoenix;
         using namespace boost::wave;
 
@@ -179,16 +199,23 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
                       token(T_PP_IFNDEF) |
                       token(T_PP_ELSE) |
                       token(T_PP_ELIF) |
-                      token(T_PP_ENDIF))) >> *(token - line_end) >> line_end ;
+                      token(T_PP_ENDIF)))
+            >> *(token[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))] - line_end) >> line_end ;
+        textblock = attr(phx::construct<CVC4::Expr>(_r1)) // conditional for a textblock is just whatever it inherited
+            >> +textline ;
 
         cond_inv = ( token(T_NOT) >> bool_term [
                          _val = phx::bind(&cond_grammar::create_inverted_expr,
                                           this, _1)]) ;
-        defined =  token(T_IDENTIFIER) [_pass = ( _1 == std::string("defined") )]
-                >> token(T_LEFTPAREN)
-                >> token(T_IDENTIFIER) [_val = phx::bind(&cond_grammar::create_defined_expr,
-                                                         this, _1)]
-                >> token(T_RIGHTPAREN) ;
+        defined =  token(T_IDENTIFIER) [
+            _pass = ( _1 == std::string("defined") )
+            ]
+            >> token(T_LEFTPAREN)
+            >> token(T_IDENTIFIER) [
+                _val = phx::bind(&cond_grammar::create_defined_expr,
+                                 this, _1)
+                ]
+            >> token(T_RIGHTPAREN) ;
         paren_term = token(T_LEFTPAREN)
             >> bool_expr  [_val = _1]
             >> token(T_RIGHTPAREN) ;
@@ -229,29 +256,84 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
 
         bool_expr = int_comp | disj_term ;
 
-        cond_if = token(T_PP_IF) >> omit[bool_expr] >> line_end
-            >>    *basic
-            >>    *(token(T_PP_ELIF) >> omit[bool_expr] >> line_end >> *basic)
-            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+        cond_if = token(T_PP_IF)
+            >> bool_expr[_a = _r1, _b = _1] >> line_end
+            // both the inherited condition and the new one must be true:
+            >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                   this, CVC4::kind::AND, _a, _b))
+            // update "condition so far"
+            >>    eps[
+                _a = phx::bind(&cond_grammar::create_binary_expr,
+                               this, CVC4::kind::AND, _a,
+                               phx::bind(&cond_grammar::create_inverted_expr,
+                                         this, _b))
+                ]
+            >>    *(token(T_PP_ELIF)
+                    >> bool_expr[_b = _1] >> line_end
+                    >> *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                        this, CVC4::kind::AND, _a, _b))
+                    >> eps[
+                        // accumulate condition
+                        _a = phx::bind(&cond_grammar::create_binary_expr,
+                                       this, CVC4::kind::AND, _a,
+                                       phx::bind(&cond_grammar::create_inverted_expr,
+                                                 this, _b))
+                        ])
+            >>    -(token(T_PP_ELSE) >> line_end >> *basic(_a))
             >>    token(T_PP_ENDIF) >> line_end ;
 
-        cond_ifdef = token(T_PP_IFDEF) >> ident >> line_end
-            >>    *basic
-            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+        cond_ifdef = token(T_PP_IFDEF)
+            >>    ident[
+                _a = phx::bind(&cond_grammar::create_defined_expr,
+                               this, _1)
+                ]
+            >> line_end
+            >>    *basic(_a)
+            >>    -(token(T_PP_ELSE) >> line_end
+                    >> *basic(phx::bind(&cond_grammar::create_inverted_expr,
+                                        this, _a)))
             >>    token(T_PP_ENDIF) >> line_end ;
 
-        cond_ifndef = token(T_PP_IFNDEF) >> ident >> line_end
-            >>    *basic
-            >>    -(token(T_PP_ELSE) >> line_end >> *basic)
+        cond_ifndef = token(T_PP_IFNDEF)
+            >>    ident[
+                _a = phx::bind(&cond_grammar::create_defined_expr,
+                               this, _1)
+                ]
+            >>    line_end
+            >>    *basic(phx::bind(&cond_grammar::create_inverted_expr,
+                                   this, _a))
+            >>    -(token(T_PP_ELSE) >> line_end >> *basic(_a))
             >>    token(T_PP_ENDIF) >> line_end ;
 
-        basic = textline | cond_if | cond_ifdef | cond_ifndef;
-        tunit = *basic >> token(T_EOF) ;
+        basic = textblock(_r1) | cond_if(_r1) | cond_ifdef(_r1) | cond_ifndef(_r1);
+/*
+        tunit = *basic(phx::bind(&cond_grammar::create_boolean_const,
+                                 this, true))[
+                                     phx::push_back(_val, _1)
+                                     ]
+            >> token(T_EOF) ;
+*/
 
+        toplvl = basic(phx::bind(&cond_grammar::create_boolean_const,
+                                this, true))
+            >> -toplvl ;
+        tunit = toplvl >> omit[token(T_EOF)] ;
+
+/*
+        tunit = basic(phx::bind(&cond_grammar::create_boolean_const,
+                                 this, true))
+            >> *basic(phx::bind(&cond_grammar::create_boolean_const,
+                                 this, true))
+
+            >> omit[token(T_EOF)] ;
+*/
+        
         BOOST_SPIRIT_DEBUG_NODE(tunit);
+        BOOST_SPIRIT_DEBUG_NODE(toplvl);
         BOOST_SPIRIT_DEBUG_NODE(basic);
         BOOST_SPIRIT_DEBUG_NODE(ident);
         BOOST_SPIRIT_DEBUG_NODE(textline);
+        BOOST_SPIRIT_DEBUG_NODE(textblock);
 
         BOOST_SPIRIT_DEBUG_NODE(defined);
         BOOST_SPIRIT_DEBUG_NODE(bool_term);
@@ -270,11 +352,26 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator, std::string(), skippe
 
     }
 private:
-    using string_rule_t = boost::spirit::qi::rule<Iterator, std::string(), skipper<Iterator>>;
-    string_rule_t tunit, basic, ident, textline, cond_if, cond_ifdef, cond_ifndef;
+    boost::spirit::qi::rule<Iterator, boost::iterator_range<char const*>(), skipper<Iterator>> ident;
     boost::spirit::qi::rule<Iterator> line_end;
+    boost::spirit::qi::rule<Iterator, std::string()> textline;   // no skipper! Keep as-is.
+    // a textblock is a single section of non-conditional lines
+    boost::spirit::qi::rule<Iterator, text_section(CVC4::Expr)> textblock;
     using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::Expr(), skipper<Iterator>>;
     expr_rule_t defined, cond_inv, bool_term, conj_term, disj_term, int_term, int_comp, paren_term, bool_expr;
+
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(), skipper<Iterator>> tunit, toplvl;
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>>
+        basic;
+
+    // cond_ifdef/cond_ifndef need an attribute for remembering the macro name
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>,
+                            boost::spirit::locals<CVC4::Expr>> cond_ifdef, cond_ifndef;
+
+    // cond_if needs a local attribute for remembering conditions, and one for
+    // accumulating conditions from elif's
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>,
+                            boost::spirit::locals<CVC4::Expr, CVC4::Expr>> cond_if;
 
     // for building logical expressions
     CVC4::ExprManager em_;
@@ -288,6 +385,9 @@ private:
     }
     CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
         return em_.mkExpr(op, e1, e2);
+    }
+    CVC4::Expr   create_boolean_const(bool b) {
+        return em_.mkConst(b);
     }
 
     // for building integer expressions
@@ -306,6 +406,7 @@ int main() {
     using namespace boost::wave;
 
     string testprog(
+        "// unconditional text\n"
         "#ifdef FOO\n"
         "#include <string>\n"
         "#ifndef BAR\n"
@@ -329,7 +430,7 @@ int main() {
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
     cond_grammar<decltype(xbeg)> myparser;
-    string result;
+    std::vector<text_section> result;
     bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, myparser,
                                                 skipper<decltype(xbeg)>(), result);
     if (pass) {
@@ -342,6 +443,13 @@ int main() {
             cout << "some input consumed. Remaining:\n";
             copy(xbeg, xend, ostream_iterator<spirit_compatible_token>(cout, ""));
         }
+        cout << "found " << result.size() << " sections:\n";
+        for (auto const& s : result) {
+            cout << "if " << s.condition << ":\n";
+            copy(s.body.begin(), s.body.end(),
+                 ostream_iterator<string>(cout, ""));
+        }
+
     } else {
         cout << "parse failed\n";
     }
