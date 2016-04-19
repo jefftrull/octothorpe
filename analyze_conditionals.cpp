@@ -407,10 +407,9 @@ private:
 
     // for building logical expressions
     CVC4::ExprManager em_;
-    CVC4::Expr   create_defined_expr(std::string const& varname) {
-        std::string varstr(varname.begin(), varname.end());
-        varstr += "_defined" ;
-        return em_.mkVar(varstr, em_.booleanType());
+    CVC4::Expr   create_defined_expr(std::string varname) {
+        varname += "_defined" ;
+        return em_.mkVar(varname, em_.booleanType());
     }
     CVC4::Expr   create_inverted_expr(CVC4::Expr e) {
         return em_.mkExpr(CVC4::kind::NOT, e);
@@ -423,12 +422,11 @@ private:
     }
 
     // for building integer expressions
-    CVC4::Expr   create_integer_var(std::string const& varname) {
-        return em_.mkVar(std::string(varname.begin(), varname.end()),
-                         em_.integerType());
+    CVC4::Expr   create_integer_var(std::string varname) {
+        return em_.mkVar(varname, em_.integerType());
     }
-    CVC4::Expr   create_integer_const(std::string const& varname) {
-        return em_.mkConst(CVC4::Rational(std::string(varname.begin(), varname.end())));
+    CVC4::Expr   create_integer_const(std::string varname) {
+        return em_.mkConst(CVC4::Rational(varname));
     }
 
 };
