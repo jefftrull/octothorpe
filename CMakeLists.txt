@@ -106,7 +106,7 @@ else()
   add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
   add_executable( ac analyze_conditionals.cpp )
   set_target_properties( ac PROPERTIES
-    # COMPILE_DEFINITIONS -DBOOST_SPIRIT_DEBUG # Uncomment in case of emergency
+    # COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
     LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB};${GMP_LIB}"
   )
   target_include_directories( ac SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
