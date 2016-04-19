@@ -70,6 +70,10 @@ struct spirit_compatible_token {
         return boost::iterator_range<base_string_iter_t>(begin(), end());
     }
 
+    bool eoi() const {
+        return base_token_.is_eoi();
+    }
+
     // provide two methods and a typedef so we can pretend to be a string
     // this allows rules to concatenate token values together without
     // extra Phoenix verbiage
@@ -99,6 +103,13 @@ private:
         return os;
     }
 };
+
+// Help with debug by defining an operator so that a loop in simple_trace.hpp works
+#ifdef BOOST_SPIRIT_DEBUG
+bool operator&&(bool a, spirit_compatible_token const& tok) {
+    return a && !tok.eoi();
+}
+#endif
 
 // Let Spirit know how to get data from our token into attributes
 namespace boost { namespace spirit { namespace traits
