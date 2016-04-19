@@ -226,11 +226,11 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         cond_inv = ( token(T_NOT) >> bool_term [
                          _val = phx::bind(&cond_grammar::create_inverted_expr,
                                           this, _1)]) ;
-        defined =  token(T_IDENTIFIER) [
+        defined =  ident [
             _pass = ( _1 == std::string("defined") )
             ]
             >> token(T_LEFTPAREN)
-            >> token(T_IDENTIFIER) [
+            >> ident [
                 _val = phx::bind(&cond_grammar::create_defined_expr,
                                  this, _1)
                 ]
@@ -251,10 +251,11 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         // parsing a subset of real expressions here, for now
         // we only compare ints, never compute with them
-        int_term = token(T_IDENTIFIER)[_val = phx::bind(&cond_grammar::create_integer_var,
-                                                        this, _1)]
-                     | token(T_INTLIT)[_val = phx::bind(&cond_grammar::create_integer_const,
-                                                        this, _1)] ;
+        int_ = token(T_INTLIT) ;
+        int_term = ident[_val = phx::bind(&cond_grammar::create_integer_var,
+                                          this, _1)] |
+                   int_[_val = phx::bind(&cond_grammar::create_integer_const,
+                                         this, _1)] ;
 
         int_comp =
             (int_term >> token(T_EQUAL) >> int_term) [
@@ -372,7 +373,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
     }
 private:
-    boost::spirit::qi::rule<Iterator, boost::iterator_range<char const*>(), skipper<Iterator>> ident;
+    boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
     boost::spirit::qi::rule<Iterator, std::string()> line_end;
     boost::spirit::qi::rule<Iterator, std::string()> textline;   // no skipper! Keep as-is.
     // a textblock is a single section of non-conditional lines
@@ -395,7 +396,7 @@ private:
 
     // for building logical expressions
     CVC4::ExprManager em_;
-    CVC4::Expr   create_defined_expr(boost::iterator_range<const char*> varname) {
+    CVC4::Expr   create_defined_expr(std::string const& varname) {
         std::string varstr(varname.begin(), varname.end());
         varstr += "_defined" ;
         return em_.mkVar(varstr, em_.booleanType());
@@ -411,11 +412,11 @@ private:
     }
 
     // for building integer expressions
-    CVC4::Expr   create_integer_var(boost::iterator_range<const char*> varname) {
+    CVC4::Expr   create_integer_var(std::string const& varname) {
         return em_.mkVar(std::string(varname.begin(), varname.end()),
                          em_.integerType());
     }
-    CVC4::Expr   create_integer_const(boost::iterator_range<const char*> varname) {
+    CVC4::Expr   create_integer_const(std::string const& varname) {
         return em_.mkConst(CVC4::Rational(std::string(varname.begin(), varname.end())));
     }
 
