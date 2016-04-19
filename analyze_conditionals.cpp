@@ -71,9 +71,6 @@ struct spirit_compatible_token {
                                                          base_token_.get_value().end());
     }
 
-    operator bool() const {
-        // This is for BOOST_SPIRIT_DEBUG.  I *think* what it needs is a "not EOF" flag
-        return !base_token_.is_eoi();
     }
 
 private:
