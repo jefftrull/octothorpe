@@ -67,11 +67,20 @@ struct spirit_compatible_token {
     spirit_compatible_token() {}
 
     boost::iterator_range<base_string_t::const_iterator> value() const {
-        return boost::iterator_range<base_string_iter_t>(base_token_.get_value().begin(),
-                                                         base_token_.get_value().end());
+        return boost::iterator_range<base_string_iter_t>(begin(), end());
     }
 
+    // provide two methods and a typedef so we can pretend to be a string
+    // this allows rules to concatenate token values together without
+    // extra Phoenix verbiage
+    base_string_iter_t begin() const {
+        return base_token_.get_value().begin();
     }
+    base_string_iter_t end() const {
+        return base_token_.get_value().end();
+    }
+    typedef base_string_t::const_iterator const_iterator;
+            
 
 private:
     boost::wave::cpplexer::lex_token<> base_token_;
@@ -94,6 +103,7 @@ private:
 // Let Spirit know how to get data from our token into attributes
 namespace boost { namespace spirit { namespace traits
 {
+
 template<>
 struct assign_to_container_from_value<
     boost::iterator_range<spirit_compatible_token::base_string_iter_t>,
@@ -107,7 +117,19 @@ struct assign_to_container_from_value<
     }
 };
 
+template<>
+struct is_string<spirit_compatible_token> : mpl::true_ {};
+
+template<>
+struct is_container<spirit_compatible_token> : mpl::true_ {};
+
+template<>
+struct char_type_of<spirit_compatible_token> {
+    typedef spirit_compatible_token::base_string_t::value_type type;
+};
+
 }}}
+
 
 // Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
 // requires adding a special typedef and returning Spirit-compatible tokens
@@ -197,7 +219,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                       token(T_PP_ELSE) |
                       token(T_PP_ELIF) |
                       token(T_PP_ENDIF)))
-            >> *(token[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))] - line_end) >> line_end ;
+            >> *(token - line_end) >> line_end ;
         textblock = attr(phx::construct<CVC4::Expr>(_r1)) // conditional for a textblock is just whatever it inherited
             >> +textline ;
 
@@ -330,6 +352,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         BOOST_SPIRIT_DEBUG_NODE(basic);
         BOOST_SPIRIT_DEBUG_NODE(ident);
         BOOST_SPIRIT_DEBUG_NODE(textline);
+        BOOST_SPIRIT_DEBUG_NODE(line_end);
         BOOST_SPIRIT_DEBUG_NODE(textblock);
 
         BOOST_SPIRIT_DEBUG_NODE(defined);
@@ -350,7 +373,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
     }
 private:
     boost::spirit::qi::rule<Iterator, boost::iterator_range<char const*>(), skipper<Iterator>> ident;
-    boost::spirit::qi::rule<Iterator> line_end;
+    boost::spirit::qi::rule<Iterator, std::string()> line_end;
     boost::spirit::qi::rule<Iterator, std::string()> textline;   // no skipper! Keep as-is.
     // a textblock is a single section of non-conditional lines
     boost::spirit::qi::rule<Iterator, text_section(CVC4::Expr)> textblock;
