@@ -237,6 +237,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         cond_inv = ( token(T_NOT) >> bool_term [
                          _val = phx::bind(&cond_grammar::create_inverted_expr,
                                           this, _1)]) ;
+        ident = token(T_IDENTIFIER);
         defined =  ident [
             _pass = ( _1 == std::string("defined") )
             ]
