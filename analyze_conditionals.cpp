@@ -39,7 +39,7 @@ struct spirit_cpp_lexer {
     typedef boost::wave::token_id token_id;
 
     iterator_type begin(CharIterator& first, CharIterator const & last,
-                        char const* initial_state = 0) const {
+                        char const*) const {
         token_type::position_type pos("unknown.cpp");
         using namespace boost::wave;
         return iterator_type(first, last, pos,
