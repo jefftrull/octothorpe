@@ -343,28 +343,12 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    token(T_PP_ENDIF) >> line_end ;
 
         basic = textblock(_r1) | cond_if(_r1) | cond_ifdef(_r1) | cond_ifndef(_r1);
-/*
-        tunit = *basic(phx::bind(&cond_grammar::create_boolean_const,
-                                 this, true))[
-                                     phx::push_back(_val, _1)
-                                     ]
-            >> token(T_EOF) ;
-*/
 
         toplvl = basic(phx::bind(&cond_grammar::create_boolean_const,
                                 this, true))
             >> -toplvl ;
         tunit = toplvl >> omit[token(T_EOF)] ;
 
-/*
-        tunit = basic(phx::bind(&cond_grammar::create_boolean_const,
-                                 this, true))
-            >> *basic(phx::bind(&cond_grammar::create_boolean_const,
-                                 this, true))
-
-            >> omit[token(T_EOF)] ;
-*/
-        
         BOOST_SPIRIT_DEBUG_NODE(tunit);
         BOOST_SPIRIT_DEBUG_NODE(toplvl);
         BOOST_SPIRIT_DEBUG_NODE(basic);
