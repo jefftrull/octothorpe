@@ -292,7 +292,9 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >> bool_expr[_a = _r1, _b = _1] >> line_end
             // both the inherited condition and the new one must be true:
             >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                   this, CVC4::kind::AND, _a, _b))
+                                   this, CVC4::kind::AND, _a, _b))[
+                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                   ]
             // update "condition so far"
             >>    eps[
                 _a = phx::bind(&cond_grammar::create_binary_expr,
@@ -303,7 +305,9 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    *(token(T_PP_ELIF)
                     >> bool_expr[_b = _1] >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::kind::AND, _a, _b))
+                                        this, CVC4::kind::AND, _a, _b))[
+                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                   ]
                     >> eps[
                         // accumulate condition
                         _a = phx::bind(&cond_grammar::create_binary_expr,
@@ -311,7 +315,10 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                        phx::bind(&cond_grammar::create_inverted_expr,
                                                  this, _b))
                         ])
-            >>    -(token(T_PP_ELSE) >> line_end >> *basic(_a))
+            >>    -(token(T_PP_ELSE) >> line_end
+                    >> *basic(_a)[
+                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                    ])
             >>    token(T_PP_ENDIF) >> line_end ;
 
         cond_ifdef = token(T_PP_IFDEF)
