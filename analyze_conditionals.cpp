@@ -205,8 +205,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                                  std::vector<text_section>(),
                                                  skipper<Iterator>>
 {
-    cond_grammar()
-        : cond_grammar::base_type(tunit), smt_(&em_) {
+    cond_grammar(CVC4::ExprManager& em)
+        : cond_grammar::base_type(tunit), em_(em) {
         using boost::spirit::_1;
         using boost::spirit::_3;
         using boost::spirit::_a;
@@ -391,14 +391,6 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
     }
 
-    // utility functions
-    CVC4::Expr simplify(CVC4::Expr const& e) {
-        return smt_.simplify(e);
-    }
-    bool satisfiable(CVC4::Expr const& e) {
-        return (smt_.checkSat(e) == CVC4::Result::SAT);
-    }
-
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
     boost::spirit::qi::rule<Iterator, std::string()> line_end;
@@ -422,8 +414,7 @@ private:
                             boost::spirit::locals<CVC4::Expr, CVC4::Expr>> cond_if;
 
     // for building logical expressions
-    CVC4::ExprManager em_;
-    CVC4::SmtEngine   smt_;
+    CVC4::ExprManager& em_;
     std::map<std::string, CVC4::Expr> int_vars_;
     std::map<std::string, CVC4::Expr> defined_vars_;
 
@@ -495,7 +486,9 @@ int main() {
 
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
-    cond_grammar<decltype(xbeg)> myparser;
+    CVC4::ExprManager em;
+    CVC4::SmtEngine   smt(&em);
+    cond_grammar<decltype(xbeg)> myparser(em);
     std::vector<text_section> result;
     bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, myparser,
                                                 skipper<decltype(xbeg)>(), result);
@@ -510,9 +503,9 @@ int main() {
             return 2;
         }
         for (auto const& s : result) {
-            if (!myparser.satisfiable(s.condition)) {
+            if (smt.checkSat(s.condition) != CVC4::Result::SAT) {
                 cout << "detected a dead code section with condition ";
-                cout << myparser.simplify(s.condition) << ":\n";
+                cout << smt.simplify(s.condition) << ":\n";
                 copy(s.body.begin(), s.body.end(),
                      ostream_iterator<string>(cout, ""));
             }
