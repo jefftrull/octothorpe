@@ -297,10 +297,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                    ]
             // update "condition so far"
             >>    eps[
-                _a = phx::bind(&cond_grammar::create_binary_expr,
-                               this, CVC4::kind::AND, _a,
-                               phx::bind(&cond_grammar::create_inverted_expr,
-                                         this, _b))
+                _a = phx::bind(&cond_grammar::create_inv_qual_expr,
+                               this, _a, _b)
                 ]
             >>    *(token(T_PP_ELIF)
                     >> bool_expr[_b = _1] >> line_end
@@ -310,10 +308,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                    ]
                     >> eps[
                         // accumulate condition
-                        _a = phx::bind(&cond_grammar::create_binary_expr,
-                                       this, CVC4::kind::AND, _a,
-                                       phx::bind(&cond_grammar::create_inverted_expr,
-                                                 this, _b))
+                        _a = phx::bind(&cond_grammar::create_inv_qual_expr,
+                                       this, _a, _b)
                         ])
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(_a)[
@@ -332,10 +328,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                         phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
-                    >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::kind::AND, _r1,
-                                        phx::bind(&cond_grammar::create_inverted_expr,
-                                                  this, _a)))[
+                    >> *basic(phx::bind(&cond_grammar::create_inv_qual_expr,
+                                        this, _r1, _a))[
                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
@@ -346,10 +340,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                this, _1)
                 ]
             >>    line_end
-            >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                   this, CVC4::kind::AND, _r1,
-                                   phx::bind(&cond_grammar::create_inverted_expr,
-                                             this, _a)))[
+            >>    *basic(phx::bind(&cond_grammar::create_inv_qual_expr,
+                                   this, _r1, _a))[
                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
@@ -435,6 +427,12 @@ private:
     CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
         return em_.mkExpr(op, e1, e2);
     }
+    // e1 && !e2
+    // common enough to warrant its own method
+    CVC4::Expr   create_inv_qual_expr(CVC4::Expr e1, CVC4::Expr e2) {
+        return em_.mkExpr(CVC4::kind::AND, e1, e2.notExpr());
+    }
+
     CVC4::Expr   create_boolean_const(bool b) {
         return em_.mkConst(b);
     }
