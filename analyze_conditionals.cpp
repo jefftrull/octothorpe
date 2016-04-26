@@ -223,7 +223,6 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         line_end = token(T_NEWLINE) | token(T_CPPCOMMENT) ;  // Wave absorbs trailing \n
 
-        ident = token(T_IDENTIFIER);
         textline = (!(token(T_PP_IF) |
                       token(T_PP_IFDEF) |
                       token(T_PP_IFNDEF) |
