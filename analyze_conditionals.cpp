@@ -341,8 +341,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                                  std::vector<text_section>(),
                                                  skipper<Iterator>>
 {
-    cond_grammar(CVC4::ExprManager& em)
-        : cond_grammar::base_type(tunit), em_(em), vars_(em_), expr_parser_(em, vars_) {
+    cond_grammar(CVC4::ExprManager& em, var_cache& vars)
+        : cond_grammar::base_type(tunit), em_(em), vars_(vars), expr_parser_(em, vars_) {
         using boost::spirit::_1;
         using boost::spirit::_a;
         using boost::spirit::_b;
@@ -472,7 +472,7 @@ private:
 
     // for building logical expressions
     CVC4::ExprManager&  em_;
-    var_cache           vars_;
+    var_cache&          vars_;
     cond_expr<Iterator> expr_parser_;
 
     CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
@@ -488,7 +488,7 @@ private:
     }
 };
 
-int main() {
+int main(int argc, char **argv) {
     using namespace std;
     using namespace boost::wave;
 
@@ -501,8 +501,8 @@ int main() {
         "#else\n"
         "using string_t = char*;\n"
         "#endif\n"
-        "#if !defined(FOO)\n"
-        "using string_t = QString;  // dead code\n"
+        "#if !defined(FOO) || (BAR > 10)\n"
+        "using string_t = QString;  // dead code - for some values of BAR\n"
         "#endif\n"
         "#endif\n"
         );
@@ -518,9 +518,10 @@ int main() {
     auto xend = make_tok_iterator(end);
     CVC4::ExprManager em;
     CVC4::SmtEngine   smt(&em);
-    cond_grammar<decltype(xbeg)> myparser(em);
+    var_cache         vars(em);      // global so we can share with user expression parser
+    cond_grammar<decltype(xbeg)> fileparser(em, vars);
     std::vector<text_section> result;
-    bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, myparser,
+    bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, fileparser,
                                                 skipper<decltype(xbeg)>(), result);
     if (pass) {
         if (xbeg == make_tok_iterator(beg)) {
@@ -531,6 +532,23 @@ int main() {
             copy(xbeg, xend, ostream_iterator<spirit_compatible_token>(cout, ""));
             return 2;
         }
+        // make an assertion for the user input, if present
+        if (argc == 2) {
+            // an expression was supplied
+            std::string expr(argv[1]);
+            lexer_t::token_type::position_type epos("command-line input");
+            lexer_t::iterator_type ebeg(expr.begin(), expr.end(), pos,
+                                        language_support(support_cpp|support_cpp0x));
+            lexer_t::iterator_type eend;
+            auto xebeg = make_tok_iterator(ebeg);
+            auto xeend = make_tok_iterator(eend);
+            cond_expr<decltype(xebeg)> exprparser(em, vars);
+            CVC4::Expr user_expr;
+            pass = boost::spirit::qi::phrase_parse(xebeg, xeend, exprparser,
+                                                   skipper<decltype(xebeg)>(), user_expr);
+            smt.assertFormula(user_expr);
+        }
+
         for (auto const& s : result) {
             if (smt.checkSat(s.condition) != CVC4::Result::SAT) {
                 cout << "detected a dead code section with condition ";
