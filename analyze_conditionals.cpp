@@ -243,7 +243,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             ]
             >> token(T_LEFTPAREN)
             >> ident [
-                _val = phx::bind(&cond_grammar::create_defined_expr,
+                _val = phx::bind(&cond_grammar::get_defined_expr,
                                  this, _1)
                 ]
             >> token(T_RIGHTPAREN) ;
@@ -264,7 +264,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         // parsing a subset of real expressions here, for now
         // we only compare ints, never compute with them
         int_ = token(T_INTLIT) ;
-        int_term = ident[_val = phx::bind(&cond_grammar::create_integer_var,
+        int_term = ident[_val = phx::bind(&cond_grammar::get_integer_var,
                                           this, _1)] |
                    int_[_val = phx::bind(&cond_grammar::create_integer_const,
                                          this, _1)] ;
@@ -323,7 +323,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         cond_ifdef = token(T_PP_IFDEF)
               >>  ident[
-                    _a = phx::bind(&cond_grammar::create_defined_expr,
+                    _a = phx::bind(&cond_grammar::get_defined_expr,
                                    this, _1)
                   ]
               >>  line_end
@@ -342,7 +342,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         cond_ifndef = token(T_PP_IFNDEF)
             >>    ident[
-                _a = phx::bind(&cond_grammar::create_defined_expr,
+                _a = phx::bind(&cond_grammar::get_defined_expr,
                                this, _1)
                 ]
             >>    line_end
@@ -421,9 +421,21 @@ private:
     // for building logical expressions
     CVC4::ExprManager em_;
     CVC4::SmtEngine   smt_;
-    CVC4::Expr   create_defined_expr(std::string varname) {
-        varname += "_defined" ;
-        return em_.mkVar(varname, em_.booleanType());
+    std::map<std::string, CVC4::Expr> int_vars_;
+    std::map<std::string, CVC4::Expr> defined_vars_;
+
+    CVC4::Expr   get_defined_expr(std::string varname) {
+        // see if we have cached this variable representing defined(varname)
+        auto it = defined_vars_.find(varname);
+        if (it != defined_vars_.end()) {
+            std::cerr << "returning " << varname << " out of cache\n";
+            return it->second;
+        }
+        // give it a different name than the integer variable representing its value
+        CVC4::Expr var = em_.mkVar(varname + "_defined", em_.booleanType());
+        std::cerr << "adding " << varname << " to cache\n";
+        defined_vars_.emplace(varname, var);
+        return var;
     }
     CVC4::Expr   create_inverted_expr(CVC4::Expr e) {
         return em_.mkExpr(CVC4::kind::NOT, e);
@@ -436,8 +448,15 @@ private:
     }
 
     // for building integer expressions
-    CVC4::Expr   create_integer_var(std::string varname) {
-        return em_.mkVar(varname, em_.integerType());
+    CVC4::Expr   get_integer_var(std::string varname) {
+        // check in cache first
+        auto it = int_vars_.find(varname);
+        if (it != int_vars_.end()) {
+            return it->second;
+        }
+        CVC4::Expr var = em_.mkVar(varname, em_.integerType());
+        int_vars_.emplace(varname, var);
+        return var;
     }
     CVC4::Expr   create_integer_const(std::string varname) {
         return em_.mkConst(CVC4::Rational(varname));
