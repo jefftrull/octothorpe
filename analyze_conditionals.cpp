@@ -422,7 +422,7 @@ private:
         return var;
     }
     CVC4::Expr   create_inverted_expr(CVC4::Expr e) {
-        return em_.mkExpr(CVC4::kind::NOT, e);
+        return e.notExpr();
     }
     CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
         return em_.mkExpr(op, e1, e2);
@@ -430,7 +430,7 @@ private:
     // e1 && !e2
     // common enough to warrant its own method
     CVC4::Expr   create_inv_qual_expr(CVC4::Expr e1, CVC4::Expr e2) {
-        return em_.mkExpr(CVC4::kind::AND, e1, e2.notExpr());
+        return e1.andExpr(e2.notExpr());
     }
 
     CVC4::Expr   create_boolean_const(bool b) {
