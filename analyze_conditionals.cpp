@@ -500,21 +500,20 @@ int main() {
         cout << "parse successful\n";
         if (xbeg == make_tok_iterator(beg)) {
             cout << "no input consumed!\n";
-        } else if (xbeg == make_tok_iterator(end)) {
-            cout << "all input consumed!\n";
-        } else {
-            cout << "some input consumed. Remaining:\n";
+            return 2;
+        } else if (xbeg != make_tok_iterator(end)) {
+            cout << "only some input consumed. Remaining:\n";
             copy(xbeg, xend, ostream_iterator<spirit_compatible_token>(cout, ""));
+            return 2;
         }
-        cout << "found " << result.size() << " sections:\n";
         for (auto const& s : result) {
             cout << "if " << myparser.simplify(s.condition) << ":\n";
             copy(s.body.begin(), s.body.end(),
                  ostream_iterator<string>(cout, ""));
         }
-
     } else {
         cout << "parse failed\n";
+        return 1;
     }
 
 }
