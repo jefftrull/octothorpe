@@ -422,12 +422,10 @@ private:
         // see if we have cached this variable representing defined(varname)
         auto it = defined_vars_.find(varname);
         if (it != defined_vars_.end()) {
-            std::cerr << "returning " << varname << " out of cache\n";
             return it->second;
         }
         // give it a different name than the integer variable representing its value
         CVC4::Expr var = em_.mkVar(varname + "_defined", em_.booleanType());
-        std::cerr << "adding " << varname << " to cache\n";
         defined_vars_.emplace(varname, var);
         return var;
     }
@@ -493,7 +491,6 @@ int main() {
     bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, myparser,
                                                 skipper<decltype(xbeg)>(), result);
     if (pass) {
-        cout << "parse successful\n";
         if (xbeg == make_tok_iterator(beg)) {
             cout << "no input consumed!\n";
             return 2;
@@ -514,5 +511,5 @@ int main() {
         cout << "parse failed\n";
         return 1;
     }
-
+    return 0;
 }
