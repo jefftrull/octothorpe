@@ -395,6 +395,9 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
     CVC4::Expr simplify(CVC4::Expr const& e) {
         return smt_.simplify(e);
     }
+    bool satisfiable(CVC4::Expr const& e) {
+        return (smt_.checkSat(e) == CVC4::Result::SAT);
+    }
 
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
@@ -507,9 +510,12 @@ int main() {
             return 2;
         }
         for (auto const& s : result) {
-            cout << "if " << myparser.simplify(s.condition) << ":\n";
-            copy(s.body.begin(), s.body.end(),
-                 ostream_iterator<string>(cout, ""));
+            if (!myparser.satisfiable(s.condition)) {
+                cout << "detected a dead code section with condition ";
+                cout << myparser.simplify(s.condition) << ":\n";
+                copy(s.body.begin(), s.body.end(),
+                     ostream_iterator<string>(cout, ""));
+            }
         }
     } else {
         cout << "parse failed\n";
