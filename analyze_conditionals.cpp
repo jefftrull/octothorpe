@@ -320,15 +320,17 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                    this, _1)
                   ]
               >>  line_end
-            >>    *basic(_a)[
-                phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+              >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                     this, CVC4::kind::AND, _r1, _a))[
+                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
-                    >> *basic(phx::bind(&cond_grammar::create_inverted_expr,
-                                        this, _a))[
-                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                    >> *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                        this, CVC4::kind::AND, _r1,
+                                        phx::bind(&cond_grammar::create_inverted_expr,
+                                                  this, _a)))[
+                           phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                         ])
-
             >>    token(T_PP_ENDIF) >> line_end ;
 
         cond_ifndef = token(T_PP_IFNDEF)
@@ -337,12 +339,15 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                this, _1)
                 ]
             >>    line_end
-            >>    *basic(phx::bind(&cond_grammar::create_inverted_expr,
-                                   this, _a))[
+            >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                   this, CVC4::kind::AND, _r1,
+                                   phx::bind(&cond_grammar::create_inverted_expr,
+                                             this, _a)))[
                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
-                    >> *basic(_a)[
+                    >> *basic(phx::bind(&cond_grammar::create_binary_expr,
+                                        this, CVC4::kind::AND, _r1, _a))[
                             phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
