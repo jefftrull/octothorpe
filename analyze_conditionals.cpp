@@ -206,7 +206,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                                  skipper<Iterator>>
 {
     cond_grammar()
-        : cond_grammar::base_type(tunit) {
+        : cond_grammar::base_type(tunit), smt_(&em_) {
         using boost::spirit::_1;
         using boost::spirit::_3;
         using boost::spirit::_a;
@@ -390,6 +390,12 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         BOOST_SPIRIT_DEBUG_NODE(cond_ifndef);
 
     }
+
+    // utility functions
+    CVC4::Expr simplify(CVC4::Expr const& e) {
+        return smt_.simplify(e);
+    }
+
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
     boost::spirit::qi::rule<Iterator, std::string()> line_end;
@@ -414,6 +420,7 @@ private:
 
     // for building logical expressions
     CVC4::ExprManager em_;
+    CVC4::SmtEngine   smt_;
     CVC4::Expr   create_defined_expr(std::string varname) {
         varname += "_defined" ;
         return em_.mkVar(varname, em_.booleanType());
@@ -451,7 +458,7 @@ int main() {
         "#else\n"
         "using string_t = char*;\n"
         "#endif\n"
-        "#if !defined(FOO) || (BAR > 10)\n"
+        "#if !defined(FOO)\n"
         "using string_t = QString;  // dead code\n"
         "#endif\n"
         "#endif\n"
@@ -482,7 +489,7 @@ int main() {
         }
         cout << "found " << result.size() << " sections:\n";
         for (auto const& s : result) {
-            cout << "if " << s.condition << ":\n";
+            cout << "if " << myparser.simplify(s.condition) << ":\n";
             copy(s.body.begin(), s.body.end(),
                  ostream_iterator<string>(cout, ""));
         }
