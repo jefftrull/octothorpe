@@ -315,15 +315,20 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    token(T_PP_ENDIF) >> line_end ;
 
         cond_ifdef = token(T_PP_IFDEF)
-            >>    ident[
-                _a = phx::bind(&cond_grammar::create_defined_expr,
-                               this, _1)
-                ]
-            >> line_end
-            >>    *basic(_a)
+              >>  ident[
+                    _a = phx::bind(&cond_grammar::create_defined_expr,
+                                   this, _1)
+                  ]
+              >>  line_end
+            >>    *basic(_a)[
+                phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                    ]
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_inverted_expr,
-                                        this, _a)))
+                                        this, _a))[
+                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                        ])
+
             >>    token(T_PP_ENDIF) >> line_end ;
 
         cond_ifndef = token(T_PP_IFNDEF)
