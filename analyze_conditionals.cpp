@@ -448,8 +448,8 @@ private:
         int_vars_.emplace(varname, var);
         return var;
     }
-    CVC4::Expr   create_integer_const(std::string varname) {
-        return em_.mkConst(CVC4::Rational(varname));
+    CVC4::Expr   create_integer_const(std::string int_literal) {
+        return em_.mkConst(CVC4::Rational(int_literal));
     }
 
 };
