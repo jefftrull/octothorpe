@@ -492,28 +492,37 @@ int main(int argc, char **argv) {
     using namespace std;
     using namespace boost::wave;
 
-    string testprog(
-        "// unconditional text\n"
-        "#ifdef FOO\n"
-        "#include <string>\n"
-        "#ifndef BAR\n"
-        "using string_t = std::string;\n"
-        "#else\n"
-        "using string_t = char*;\n"
-        "#endif\n"
-        "#if !defined(FOO) || (BAR > 10)\n"
-        "using string_t = QString;  // dead code - for some values of BAR\n"
-        "#endif\n"
-        "#endif\n"
-        );
+    if ((argc == 1) || (argc > 3)) {
+        std::cerr << "usage: " << argv[0] << " [condition] path\n";
+        return 4;
+    }
+
+    char const* fn = ((argc == 2) ? argv[1] : argv[2]);
+    ifstream cppfile(fn);
+    if (!cppfile.is_open()) {
+        std::cerr << "unable to open requested file " << fn << "\n";
+        return 5;
+    }
+    cppfile.unsetf(ios::skipws);
+    // really we should use a forward iterator type on the stream directly
+    // but this doesn't seem to work with wave for some reason...
+    // just suck it all into memory :(
+    std::istream_iterator<char> fbeg(cppfile);
+    std::string cppstr(fbeg, std::istream_iterator<char>());
+
+    using char_iter_t = std::string::const_iterator;
 
     // Give it a try
-    using lexer_t = spirit_cpp_lexer<string::const_iterator>;
-    lexer_t::token_type::position_type pos("testprog.cpp");
-    lexer_t::iterator_type beg(testprog.begin(), testprog.end(), pos,
+    using lexer_t = spirit_cpp_lexer<char_iter_t>;
+    lexer_t::token_type::position_type pos(fn);
+
+    // create lexer token iterators from character iterators
+    auto cbeg = cppstr.begin();
+    lexer_t::iterator_type beg(cbeg, cppstr.end(), pos,
                                language_support(support_cpp|support_cpp0x));
     lexer_t::iterator_type end;
 
+    // create Spirit V2-compatible iterators from lexer iterators
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
     CVC4::ExprManager em;
@@ -533,7 +542,7 @@ int main(int argc, char **argv) {
             return 2;
         }
         // make an assertion for the user input, if present
-        if (argc == 2) {
+        if (argc == 3) {
             // an expression was supplied
             std::string expr(argv[1]);
             lexer_t::token_type::position_type epos("command-line input");
