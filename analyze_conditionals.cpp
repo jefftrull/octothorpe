@@ -28,28 +28,9 @@
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
 
-// lexertl::lexer takes a template argument Token, which is a typedef
-// specialization of position_token with underlying iterator and
-// possible token values specified
+typedef boost::wave::cpplexer::lex_token<> cpplexer_token_t;
+typedef boost::wave::cpplexer::lex_iterator<cpplexer_token_t> cpplexer_iterator_t;
 
-template<typename CharIterator>
-struct spirit_cpp_lexer {
-    typedef boost::wave::cpplexer::lex_token<> token_type;
-    typedef boost::wave::cpplexer::lex_iterator<token_type> iterator_type;
-    typedef boost::wave::token_id token_id;
-
-    iterator_type begin(CharIterator& first, CharIterator const & last,
-                        char const*) const {
-        token_type::position_type pos("unknown.cpp");
-        using namespace boost::wave;
-        return iterator_type(first, last, pos,
-                             language_support(support_cpp|support_cpp0x));
-    }
-    iterator_type end() const {
-        return spirit_cpp_lexer::iterator_type();
-    }
-};
-        
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
 struct spirit_compatible_token {
@@ -510,17 +491,14 @@ int main(int argc, char **argv) {
     std::istream_iterator<char> fbeg(cppfile);
     std::string cppstr(fbeg, std::istream_iterator<char>());
 
-    using char_iter_t = std::string::const_iterator;
-
     // Give it a try
-    using lexer_t = spirit_cpp_lexer<char_iter_t>;
-    lexer_t::token_type::position_type pos(fn);
+    cpplexer_token_t::position_type pos(fn);
 
     // create lexer token iterators from character iterators
     auto cbeg = cppstr.begin();
-    lexer_t::iterator_type beg(cbeg, cppstr.end(), pos,
+    cpplexer_iterator_t beg(cbeg, cppstr.end(), pos,
                                language_support(support_cpp|support_cpp0x));
-    lexer_t::iterator_type end;
+    cpplexer_iterator_t end;
 
     // create Spirit V2-compatible iterators from lexer iterators
     auto xbeg = make_tok_iterator(beg);
@@ -545,10 +523,10 @@ int main(int argc, char **argv) {
         if (argc == 3) {
             // an expression was supplied
             std::string expr(argv[1]);
-            lexer_t::token_type::position_type epos("command-line input");
-            lexer_t::iterator_type ebeg(expr.begin(), expr.end(), pos,
+            cpplexer_token_t::position_type epos("command-line input");
+            cpplexer_iterator_t ebeg(expr.begin(), expr.end(), pos,
                                         language_support(support_cpp|support_cpp0x));
-            lexer_t::iterator_type eend;
+            cpplexer_iterator_t eend;
             auto xebeg = make_tok_iterator(ebeg);
             auto xeend = make_tok_iterator(eend);
             cond_expr<decltype(xebeg)> exprparser(em, vars);
