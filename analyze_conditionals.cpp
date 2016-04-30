@@ -1,5 +1,5 @@
 /**
- * Example of turning conditional compilation into policy classes
+ *  Example of analyzing equations controlling sections of text in a source file
  *
  *   Copyright (C) 2016 Jeff Trull <edaskel@att.net>
  *
