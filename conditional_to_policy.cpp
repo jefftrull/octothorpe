@@ -402,37 +402,50 @@ private:
     RangeNodes<clang::Stmt>&               stmt_nodes_;
 };
 
+// run a tool (usually a Finder) on an input file
+// Make the supplied macro be defined on the command line if Sense is true
+// optionally add source file callbacks to hook the beginning and end of each file processed
+template<bool Sense, typename FactoryT>
+int runToolOnFile(FactoryT*                            consumerFactory,
+                  std::string                          mname,
+                  std::string                          fileName,
+                  clang::tooling::SourceFileCallbacks* cb = nullptr) {
+    using namespace clang::tooling;
+    // create a fake command line of type Clang tools accept
+    std::vector<char const*> args;
+    args.push_back("c2p");
+    args.push_back(fileName.c_str());
+    // append -D for the "macro defined" case
+    args.push_back("--");
+    if (Sense) {
+        std::string define_macro("-D");
+        define_macro += mname;
+        args.push_back(define_macro.c_str());
+    }
+    // prepare tool arguments
+    // avoiding the use of CommonOptionsParser, which uses statics...
+    int args_c = args.size();
+    std::unique_ptr<FixedCompilationDatabase>
+        compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
+    std::vector<std::string> comp_file_list(1, fileName);
+
+    // define the tool from those options
+    RefactoringTool     tool(*compdb, comp_file_list);
+
+    return tool.run(newFrontendActionFactory(consumerFactory, cb).get());    
+}
+
 template<bool Sense>
-int FindConditionalNodes(char const ** argv,
+int FindConditionalNodes(std::string                                          mname,
+                         std::string                                          fileName,
                          // result storage
                          std::vector<std::experimental::optional<CondRange>>& cond_ranges,
-                         std::vector<std::set<std::string>>& typedefs,
-                         clang::tooling::Replacements&    replacements)
+                         std::vector<std::set<std::string>>&                  typedefs,
+                         clang::tooling::Replacements&                        replacements)
 {
     using namespace clang;
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
-
-    // create a fake command line of type Clang tools accept
-    std::vector<char const*> args;
-    args.push_back(argv[0]);
-    args.push_back(argv[2]);
-    args.push_back("--");
-    // append -D for the "macro defined" case
-    std::string mname(argv[1]);
-    std::string define_macro("-D");
-    if (Sense) {
-        define_macro += mname;
-        args.push_back(define_macro.c_str());
-    }
-    int args_c = args.size();
-    // prepare tool arguments
-    // avoiding the use of CommonOptionsParser, which uses statics...
-    std::unique_ptr<FixedCompilationDatabase>
-        compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
-    std::vector<std::string> comp_file_list(1, argv[2]);
-    // define the tool from those options
-    RefactoringTool     tool(*compdb, comp_file_list);
 
     std::vector<SourceRange>         source_ranges;
     RangeNodes<Decl>                 decls;
@@ -447,11 +460,11 @@ int FindConditionalNodes(char const ** argv,
     MatcherInstaller      set_up_source_ranges(finder, source_ranges, decls, stmts);
     finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
 
-    // run the tool
 
     std::cout << "Conditional source ranges for when FOO is ";
     std::cout << (Sense ? "defined" : "not defined") << ":\n";
-    if (int result = tool.run(newFrontendActionFactory(&finder, &source_hooks).get())) {
+    // run the tool
+    if (int result = runToolOnFile<Sense>(&finder, mname, fileName, &source_hooks)) {
         return result;
     }
 
@@ -463,7 +476,7 @@ int FindConditionalNodes(char const ** argv,
         choose_condition += "#else\n";
         choose_condition += ("    using " + mname + "_t = " + mname + "_class<false>;\n");
         choose_condition += "#endif\n";
-        replacements.insert(Replacement(comp_file_list[0], 0, 0, choose_condition));
+        replacements.insert(Replacement(fileName, 0, 0, choose_condition));
     }
 
     // remember the types that were defined in this condition
@@ -502,14 +515,14 @@ int main(int argc, char const **argv) {
     // build and run for "defined" case
     std::vector<std::experimental::optional<CondRange>> cond_ranges_defined;   // source range for each ifdef
     std::vector<std::set<std::string>> typedefs_defined;
-    if (int result = FindConditionalNodes<true>(argv, cond_ranges_defined, typedefs_defined, replacements)) {
+    if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_ranges_defined, typedefs_defined, replacements)) {
         return result;
     }
 
     // and the same for the "undefined" case:
     std::vector<std::experimental::optional<CondRange>> cond_ranges_undefined;
     std::vector<std::set<std::string>> typedefs_undefined;
-    if (int result = FindConditionalNodes<false>(argv, cond_ranges_undefined, typedefs_undefined, replacements)) {
+    if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_ranges_undefined, typedefs_undefined, replacements)) {
         return result;
     }
 
