@@ -250,8 +250,16 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
         }
 
         // create a specialization for this sense of the target macro
-        std::string cond_class("template<>\nstruct ");
-        cond_class += (mname_ + "_class<" + (Sense ? "true" : "false") + "> {\n");
+        std::string cond_class;
+        if (Sense) {
+            // base template is the "true" case
+            // Leveraging the fact that we run the "true" case first...
+            cond_class += std::string("template<bool MacroDefined>\nstruct ");
+            cond_class += (mname_ + "_class {\n");
+        } else {
+            cond_class = std::string("template<>\nstruct ");
+            cond_class += (mname_ + "_class<false" + "> {\n");
+        }
         for ( auto const& declgroup : decls_ ) {
             for ( auto decl : declgroup ) {
                 cond_class += "    ";
@@ -432,20 +440,12 @@ int FindConditionalNodes(char const ** argv,
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
     SourceFileHooks<Sense>           source_hooks(mname, source_ranges, cond_ranges,
-                                                  decls, stmts, &replacements);
+                                                  decls, stmts, &replacements);  // why replacements?
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
     MatcherInstaller      set_up_source_ranges(finder, source_ranges, decls, stmts);
     finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
-
-    if (Sense) {
-        // seed replacements with the base template
-        // using the fact that we run the "true" case first...
-        std::string base_class("template<bool MacroDefined>\nstruct ");
-        base_class += (mname + "_class;\n");
-        replacements.insert(Replacement(comp_file_list[0], 0, 0, base_class));
-    }
 
     // run the tool
 
