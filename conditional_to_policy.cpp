@@ -66,17 +66,22 @@ template<bool Sense>    // whether to find ranges where the symbols is defined
 struct PPActions : clang::PPCallbacks
 {
     PPActions(clang::LangOptions lopt,
-                clang::SourceManager & sm,
-                std::string mname,
-                std::vector<clang::SourceRange>& source_ranges)
-        : mname_(mname), source_ranges_(source_ranges) {}
+              clang::SourceManager & sm,
+              std::string mname,
+              std::vector<clang::SourceRange>& source_ranges,
+              std::vector<clang::SourceRange>& source_ranges_pp)
+        : lopt_(lopt), sm_(sm), mname_(mname),
+          source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp) {}
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
                clang::MacroDefinition const& md) override {
         // check for our target macro and sense
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
-            cond_starts_.emplace(loc, true);
+            // determine where the #ifdef macro ends
+            auto tok_end = clang::Lexer::getLocForEndOfToken(tok.getLocation(),
+                                                             0, sm_, lopt_);
+            cond_starts_.emplace(loc, std::make_pair(true, tok_end));
             else_loc_ = std::experimental::nullopt;
         }
     }
@@ -85,7 +90,9 @@ struct PPActions : clang::PPCallbacks
                 clang::Token const& tok,
                 clang::MacroDefinition const& md) override {
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
-            cond_starts_.emplace(loc, false);
+            auto tok_end = clang::Lexer::getLocForEndOfToken(tok.getLocation(),
+                                                             0, sm_, lopt_);
+            cond_starts_.emplace(loc, std::make_pair(false, tok_end));
             else_loc_ = std::experimental::nullopt;
         }
     }
@@ -99,12 +106,18 @@ struct PPActions : clang::PPCallbacks
         // see if this else is related to an ifdef/ifndef for our target macro
         auto start_it = cond_starts_.find(ifloc);
         if (start_it != cond_starts_.end()) {
-            if (start_it->second == Sense) {
+            else_loc_ = clang::Lexer::getLocForEndOfToken(elseloc, 0, sm_, lopt_);
+            if (start_it->second.first == Sense) {
                 // this is the *end* of our range of interest
-                source_ranges_.emplace_back(ifloc.getLocWithOffset(-1),
+                // PP-inclusive range starts at hash, ends at trailing "e" of "else"
+                source_ranges_pp_.emplace_back(ifloc.getLocWithOffset(-1),
+                                               *else_loc_);
+                // for PP-exclusive we use just past the end of the #ifdef/ifndef
+                // which we stored when we found the statement
+                source_ranges_.emplace_back(start_it->second.second,
                                             elseloc.getLocWithOffset(-2));  // *before* the hash
             }
-            else_loc_ = elseloc;
+            // otherwise this begins a range of interest which starts *after* the else
         }
     }        
 
@@ -113,28 +126,45 @@ struct PPActions : clang::PPCallbacks
         // is this endif related to an ifdef/ifndef of interest?
         auto start_it = cond_starts_.find(ifloc);
         if (start_it != cond_starts_.end()) {
+            auto end_of_endif = clang::Lexer::getLocForEndOfToken(endifloc, 0, sm_, lopt_);
             // this endif may terminate:
             // - an if of the desired sense without an else (range is ifloc through here)
-            if ((start_it->second == Sense) && !else_loc_) {
-                source_ranges_.emplace_back(ifloc.getLocWithOffset(-1), endifloc);
+            if ((start_it->second.first == Sense) && !else_loc_) {
+                source_ranges_.emplace_back(start_it->second.second,
+                                            endifloc.getLocWithOffset(-2));
+                source_ranges_pp_.emplace_back(ifloc.getLocWithOffset(-1), end_of_endif);
             // - an if of the inverted sense with an else (range is else through here)
-            } else if ((start_it->second != Sense) && else_loc_) {
-                source_ranges_.emplace_back(else_loc_->getLocWithOffset(-1), endifloc);
+            } else if ((start_it->second.first != Sense) && else_loc_) {
+                // else_loc_ is always "end of the else"
+                // we use it for both purposes, assigning the #else always to the first
+                // section for cleanup purposes
+                source_ranges_.emplace_back(*else_loc_,
+                                            endifloc.getLocWithOffset(-2));
+                source_ranges_pp_.emplace_back(*else_loc_, end_of_endif);
             // - an if of inverted sense without an else - empty range
-            } else if (start_it->second != Sense) {
+            } else if (start_it->second.first != Sense) {
                 // an empty range must have end before start... but some parts of Clang don't like
                 // we will detect this case before passing it on to any part of Clang
                 source_ranges_.emplace_back(clang::SourceRange());
+                source_ranges_pp_.emplace_back(clang::SourceRange());
             }
             // - an if of desired sense with else (we found the range when we found the else)
         }
     }        
 
 private:
-    std::string           mname_;
-    std::map<clang::SourceLocation, bool> cond_starts_;
+    clang::LangOptions          lopt_;
+    clang::SourceManager const& sm_;
+    std::string                 mname_;
+    std::map<clang::SourceLocation,       // for remembering conditionals we later terminate
+             std::pair<
+                 bool,                    // "true" for ifdef, "false" for ifndef
+                 clang::SourceLocation> > // where the if ends (last char of macro name)
+        cond_starts_;
+
     std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
     std::vector<clang::SourceRange>& source_ranges_;
+    std::vector<clang::SourceRange>& source_ranges_pp_;
 
 };
 
@@ -185,17 +215,38 @@ private:
     CondLocation beg_, end_;
 };
 
+// a class representing a conditional region in the form of two enclosing regions
+// one which includes the preprocessor directives and which which doesn't
+struct CondRegion {
+
+    CondRegion(CondRange const& contents, CondRange const& contents_incl_pp)
+        : contents_(contents), contents_incl_pp_(contents_incl_pp) {}
+
+    CondRange const& contents() const {
+        return contents_;
+    }
+
+    CondRange const& contents_with_pp() const {
+        return contents_incl_pp_;
+    }
+
+private:
+    CondRange contents_;         // between #ifdef/#ifndef/#else and #else/#endif
+    CondRange contents_incl_pp_; // including the enclosing directives (for cleanup) 
+};
 
 template<bool Sense>
 struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 {
     SourceFileHooks(std::string mname,
                     std::vector<clang::SourceRange>& source_ranges,
-                    std::vector<std::experimental::optional<CondRange>>& cond_ranges,
+                    std::vector<clang::SourceRange>& source_ranges_pp,
+                    std::vector<std::experimental::optional<CondRegion>>& cond_regions,
                     RangeNodes<clang::Decl> const& decls,
                     RangeNodes<clang::Stmt> const& stmts,
                     clang::tooling::Replacements* replace)
-        : mname_(mname), source_ranges_(source_ranges), cond_ranges_(cond_ranges),
+        : mname_(mname), source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp),
+          cond_regions_(cond_regions),
           ci_(nullptr), decls_(decls), stmts_(stmts), replace_(replace) {}
 
     ~SourceFileHooks() override {}
@@ -207,7 +258,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
             llvm::make_unique<PPActions<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
-                                                mname_, source_ranges_));
+                                                mname_, source_ranges_, source_ranges_pp_));
+        // when the preprocessor runs it will update source_ranges as it finds conditionals
         return true;
     }
 
@@ -219,16 +271,17 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
         SourceManager const* sm = &ci_->getSourceManager();
         LangOptions   lopt = ci_->getLangOpts();
 
-        // fill CondRange container with default-constructed (therefore empty) ranges
-        cond_ranges_.resize(source_ranges_.size());
+        // fill CondRegion container with default-constructed (therefore empty) ranges
+        cond_regions_.resize(source_ranges_.size());
 
         for ( std::size_t i = 0; i < source_ranges_.size(); ++i) {
             if (source_ranges_[i].isInvalid()) {
                 continue;
             }
-            cond_ranges_[i] = CondRange(*sm, source_ranges_[i]);
+            cond_regions_[i] = CondRegion(CondRange(*sm, source_ranges_[i]),
+                                          CondRange(*sm, source_ranges_pp_[i]));
             std::cout << "The range ";
-            print_source_range_info(std::cout, sm, source_ranges_[i]);
+            print_decorated_source_range(std::cout, sm, lopt, source_ranges_[i]);
             if (source_ranges_[i].getBegin() == source_ranges_[i].getEnd()) {
                 std::cout << " is empty\n";
                 continue;
@@ -243,8 +296,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     std::cout << ";\n";
                 }
             }
-            // create a replacement that removes this conditional range
-            replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_[i], true),
+            // create a replacement that removes this conditional range (including PP directives)
+            replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_pp_[i], true),
                                                   "", lopt));
 
         }
@@ -278,8 +331,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 
 private:
     std::string mname_;
-    std::vector<clang::SourceRange>& source_ranges_;
-    std::vector<std::experimental::optional<CondRange>>& cond_ranges_;
+    std::vector<clang::SourceRange>& source_ranges_, source_ranges_pp_;
+    std::vector<std::experimental::optional<CondRegion>>& cond_regions_;
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
@@ -436,23 +489,24 @@ int runToolOnFile(FactoryT*                            consumerFactory,
 }
 
 template<bool Sense>
-int FindConditionalNodes(std::string                                          mname,
-                         std::string                                          fileName,
+int FindConditionalNodes(std::string                                           mname,
+                         std::string                                           fileName,
                          // result storage
-                         std::vector<std::experimental::optional<CondRange>>& cond_ranges,
-                         std::vector<std::set<std::string>>&                  typedefs,
-                         clang::tooling::Replacements&                        replacements)
+                         std::vector<std::experimental::optional<CondRegion>>& cond_regions,
+                         std::vector<std::set<std::string>>&                   typedefs,
+                         clang::tooling::Replacements&                         replacements)
 {
     using namespace clang;
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
 
-    std::vector<SourceRange>         source_ranges;
+    std::vector<SourceRange>         source_ranges, source_ranges_pp;
     RangeNodes<Decl>                 decls;
     RangeNodes<Stmt>                 stmts;
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
-    SourceFileHooks<Sense>           source_hooks(mname, source_ranges, cond_ranges,
+    SourceFileHooks<Sense>           source_hooks(mname, source_ranges, source_ranges_pp,
+                                                  cond_regions,
                                                   decls, stmts, &replacements);  // why replacements?
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
@@ -496,6 +550,7 @@ int FindConditionalNodes(std::string                                          mn
     return 0;
 }
 
+using cond_region_list_t = std::vector<std::experimental::optional<CondRegion>>;
 int main(int argc, char const **argv) {
 
     using namespace clang;
@@ -513,28 +568,28 @@ int main(int argc, char const **argv) {
     tooling::Replacements replacements;             // modification instructions
 
     // build and run for "defined" case
-    std::vector<std::experimental::optional<CondRange>> cond_ranges_defined;   // source range for each ifdef
+    cond_region_list_t cond_regions_defined;   // source region for each ifdef
     std::vector<std::set<std::string>> typedefs_defined;
-    if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_ranges_defined, typedefs_defined, replacements)) {
+    if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_regions_defined, typedefs_defined, replacements)) {
         return result;
     }
 
     // and the same for the "undefined" case:
-    std::vector<std::experimental::optional<CondRange>> cond_ranges_undefined;
+    cond_region_list_t cond_regions_undefined;
     std::vector<std::set<std::string>> typedefs_undefined;
-    if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_ranges_undefined, typedefs_undefined, replacements)) {
+    if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined, typedefs_undefined, replacements)) {
         return result;
     }
 
     // if any conditional regions have matching (in name) type declarations,
     // replace with a single one referring to the chosen specialization
-    for (std::size_t i = 0; i < cond_ranges_defined.size(); ++i) {
-        if (!cond_ranges_defined[i] || !cond_ranges_undefined[i]) {
+    for (std::size_t i = 0; i < cond_regions_defined.size(); ++i) {
+        if (!cond_regions_defined[i] || !cond_regions_undefined[i]) {
             continue;
         }
-        CondLocation start = std::min(cond_ranges_defined[i]->getBegin(),
-                                      cond_ranges_undefined[i]->getBegin());
-
+        // put using statement right before directive that starts the conditional region
+        CondLocation start = std::min(cond_regions_defined[i]->contents_with_pp().getBegin(),
+                                      cond_regions_undefined[i]->contents_with_pp().getBegin());
         std::string mname(argv[1]);
         std::set_intersection(
             typedefs_defined[i].begin(), typedefs_defined[i].end(),
