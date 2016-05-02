@@ -474,22 +474,22 @@ int main(int argc, char **argv) {
     using namespace boost::wave;
 
     if ((argc == 1) || (argc > 3)) {
-        std::cerr << "usage: " << argv[0] << " [condition] path\n";
+        cerr << "usage: " << argv[0] << " [condition] path\n";
         return 4;
     }
 
     char const* fn = ((argc == 2) ? argv[1] : argv[2]);
     ifstream cppfile(fn);
     if (!cppfile.is_open()) {
-        std::cerr << "unable to open requested file " << fn << "\n";
+        cerr << "unable to open requested file " << fn << "\n";
         return 5;
     }
     cppfile.unsetf(ios::skipws);
     // really we should use a forward iterator type on the stream directly
     // but this doesn't seem to work with wave for some reason...
     // just suck it all into memory :(
-    std::istream_iterator<char> fbeg(cppfile);
-    std::string cppstr(fbeg, std::istream_iterator<char>());
+    istream_iterator<char> fbeg(cppfile);
+    string cppstr(fbeg, istream_iterator<char>());
 
     // Give it a try
     cpplexer_token_t::position_type pos(fn);
@@ -507,7 +507,7 @@ int main(int argc, char **argv) {
     CVC4::SmtEngine   smt(&em);
     var_cache         vars(em);      // global so we can share with user expression parser
     cond_grammar<decltype(xbeg)> fileparser(em, vars);
-    std::vector<text_section> result;
+    vector<text_section> result;
     bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, fileparser,
                                                 skipper<decltype(xbeg)>(), result);
     if (pass) {
@@ -522,7 +522,7 @@ int main(int argc, char **argv) {
         // make an assertion for the user input, if present
         if (argc == 3) {
             // an expression was supplied
-            std::string expr(argv[1]);
+            string expr(argv[1]);
             cpplexer_token_t::position_type epos("command-line input");
             cpplexer_iterator_t ebeg(expr.begin(), expr.end(), pos,
                                         language_support(support_cpp|support_cpp0x));

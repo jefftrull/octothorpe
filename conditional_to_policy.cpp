@@ -244,10 +244,11 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     std::vector<std::experimental::optional<CondRegion>>& cond_regions,
                     RangeNodes<clang::Decl> const& decls,
                     RangeNodes<clang::Stmt> const& stmts,
+                    std::vector<std::vector<std::string>>& type_names,
                     clang::tooling::Replacements* replace)
         : mname_(mname), source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp),
           cond_regions_(cond_regions),
-          ci_(nullptr), decls_(decls), stmts_(stmts), replace_(replace) {}
+          ci_(nullptr), decls_(decls), stmts_(stmts), type_names_(type_names), replace_(replace) {}
 
     ~SourceFileHooks() override {}
 
@@ -302,6 +303,19 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 
         }
 
+        // post-process bits of the AST we gathered to produce refactoring info that persists
+        // after this tool completes
+        type_names_.resize(decls_.size());
+        for (std::size_t i = 0; i < decls_.size(); ++i) {
+            for (auto decl : decls_[i]) {
+                if (clang::TypedefDecl const* td = llvm::dyn_cast<clang::TypedefDecl>(decl)) {
+                    type_names_[i].push_back(td->getName());
+                } else if (auto ud = llvm::dyn_cast<clang::UsingDecl>(decl)) {
+                    type_names_[i].push_back(ud->getName());
+                }
+            }
+        }
+
         // create a specialization for this sense of the target macro
         std::string cond_class;
         if (Sense) {
@@ -336,6 +350,7 @@ private:
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
+    std::vector<std::vector<std::string>>& type_names_;
     clang::tooling::Replacements * replace_;
 
     StringRef fn_;
@@ -391,8 +406,10 @@ struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCall
     MatcherInstaller(clang::ast_matchers::MatchFinder& finder,
                      std::vector<clang::SourceRange> const& ranges,
                      RangeNodes<clang::Decl>& decl_nodes,
-                     RangeNodes<clang::Stmt>& stmt_nodes)
-        : finder_(finder), ranges_(ranges), decl_nodes_(decl_nodes), stmt_nodes_(stmt_nodes) {}
+                     RangeNodes<clang::Stmt>& stmt_nodes,
+                     std::vector<std::vector<std::string>>& type_names)
+        : finder_(finder), ranges_(ranges),
+          decl_nodes_(decl_nodes), stmt_nodes_(stmt_nodes), type_names_(type_names) {}
 
     virtual void run() override {
         // install matchers for the given ranges into the finder
@@ -408,6 +425,7 @@ struct MatcherInstaller :  clang::ast_matchers::MatchFinder::ParsingDoneTestCall
         for( auto const& range : ranges_ ) {
             // typedef matcher
             decl_nodes_.emplace_back();
+            type_names_.emplace_back();
             decl_handlers_.emplace_back(decl_nodes_.back());
             // statement matcher
             stmt_nodes_.emplace_back();
@@ -453,6 +471,9 @@ private:
     HandlerVec<clang::Stmt>                stmt_handlers_;
     RangeNodes<clang::Decl>&               decl_nodes_;
     RangeNodes<clang::Stmt>&               stmt_nodes_;
+    // names of the types defined in each range
+    // for "using" statement
+    std::vector<std::vector<std::string>>& type_names_;
 };
 
 // run a tool (usually a Finder) on an input file
@@ -500,18 +521,23 @@ int FindConditionalNodes(std::string                                           m
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
 
+    // strictly for communication between match callbacks and the source file hooks
+    // which are defined in this scope.  This data becomes invalid after the tool is run:
     std::vector<SourceRange>         source_ranges, source_ranges_pp;
     RangeNodes<Decl>                 decls;
     RangeNodes<Stmt>                 stmts;
 
+    // non-Clang stuff can and will outlive the tool though:
+    std::vector<std::vector<std::string>> type_names;   // types defined in each range
+
     // create callbacks for storing the conditional ranges as the preprocessor finds them
     SourceFileHooks<Sense>           source_hooks(mname, source_ranges, source_ranges_pp,
                                                   cond_regions,
-                                                  decls, stmts, &replacements);  // why replacements?
+                                                  decls, stmts, type_names, &replacements);  // why replacements?
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
-    MatcherInstaller      set_up_source_ranges(finder, source_ranges, decls, stmts);
+    MatcherInstaller      set_up_source_ranges(finder, source_ranges, decls, stmts, type_names);
     finder.registerTestCallbackAfterParsing(&set_up_source_ranges);
 
 
@@ -534,17 +560,13 @@ int FindConditionalNodes(std::string                                           m
     }
 
     // remember the types that were defined in this condition
-    // we could in the future match them up only by range, but in this case we will
-    // accept any definition of the same type name wherever it appears
-    typedefs.resize(decls.size());
-    for( std::size_t i = 0; i < decls.size(); ++i) {
-        for( auto decl : decls[i] ) {
-            if (clang::TypedefDecl const* td = llvm::dyn_cast<clang::TypedefDecl>(decl)) {
-                typedefs[i].insert(td->getName());
-            } else if (auto ud = llvm::dyn_cast<clang::UsingDecl>(decl)) {
-                typedefs[i].insert(ud->getName());
-            }
-        }
+    typedefs.resize(type_names.size());
+    std::cerr << "copying " << type_names.size() << "type name sections:\n";
+    for( std::size_t i = 0; i < type_names.size(); ++i) {
+        std::cerr << "    copying " << type_names[i].size() << " type names\n";
+        // uniquify by range via set insertion
+        std::copy(type_names[i].begin(), type_names[i].end(),
+                  std::inserter(typedefs[i], typedefs[i].end()));
     }
 
     return 0;
