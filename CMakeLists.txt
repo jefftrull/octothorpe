@@ -91,7 +91,7 @@ set_target_properties( c2p PROPERTIES
 # User is supposed to have supplied CVC4_ROOT on the CMake command line with -D
 set( CVC4_ROOT "" CACHE PATH "Path to the CVC4 build" )
 if( "${CVC4_ROOT}" STREQUAL "" )
-  message( WARNING "No value provided for CVC4_ROOT; the ac executable will not be built" )
+  message( WARNING "No value provided for CVC4_ROOT; the deadc0de executable will not be built" )
 else()
   find_library( CVC4_LIB cvc4 ${CVC4_ROOT}/lib )
   if( NOT CVC4_LIB )
@@ -104,11 +104,11 @@ else()
 
   # Boost.Wave (lexer) example
   add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
-  add_executable( ac analyze_conditionals.cpp )
-  set_target_properties( ac PROPERTIES
+  add_executable( deadc0de analyze_conditionals.cpp )
+  set_target_properties( deadc0de PROPERTIES
     # COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
     LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB};${GMP_LIB}"
   )
-  target_include_directories( ac SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
+  target_include_directories( deadc0de SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
   
 endif()
