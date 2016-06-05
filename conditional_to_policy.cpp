@@ -247,8 +247,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     std::vector<std::vector<std::string>>& type_names,
                     clang::tooling::Replacements* replace)
         : mname_(mname), source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp),
-          cond_regions_(cond_regions),
-          ci_(nullptr), decls_(decls), stmts_(stmts), type_names_(type_names), replace_(replace) {}
+          cond_regions_(cond_regions), ci_(nullptr), decls_(decls), stmts_(stmts),
+          type_names_(type_names), replace_(replace) {}
 
     ~SourceFileHooks() override {}
 
@@ -277,6 +277,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 
         for ( std::size_t i = 0; i < source_ranges_.size(); ++i) {
             if (source_ranges_[i].isInvalid()) {
+                // this means an empty range.  We leave a placeholder here to sync
+                // up the indices between senses.
                 continue;
             }
             cond_regions_[i] = CondRegion(CondRange(*sm, source_ranges_[i]),
@@ -300,7 +302,6 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
             // create a replacement that removes this conditional range (including PP directives)
             replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_pp_[i], true),
                                                   "", lopt));
-
         }
 
         // post-process bits of the AST we gathered to produce refactoring info that persists
@@ -313,6 +314,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                 } else if (auto ud = llvm::dyn_cast<clang::UsingDecl>(decl)) {
                     type_names_[i].push_back(ud->getName());
                 }
+                // there should be no other types, actually, as we restrict to the
+                // above two in the Matcher
             }
         }
 
@@ -528,12 +531,13 @@ int FindConditionalNodes(std::string                                           m
     RangeNodes<Stmt>                 stmts;
 
     // non-Clang stuff can and will outlive the tool though:
-    std::vector<std::vector<std::string>> type_names;   // types defined in each range
+    std::vector<std::vector<std::string>>
+                                     type_names;   // types defined in each range
 
     // create callbacks for storing the conditional ranges as the preprocessor finds them
     SourceFileHooks<Sense>           source_hooks(mname, source_ranges, source_ranges_pp,
-                                                  cond_regions,
-                                                  decls, stmts, type_names, &replacements);  // why replacements?
+                                                  cond_regions, decls, stmts,
+                                                  type_names, &replacements);  // why replacements?
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
@@ -590,16 +594,18 @@ int main(int argc, char const **argv) {
     tooling::Replacements replacements;             // modification instructions
 
     // build and run for "defined" case
-    cond_region_list_t cond_regions_defined;   // source region for each ifdef
-    std::vector<std::set<std::string>> typedefs_defined;
-    if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_regions_defined, typedefs_defined, replacements)) {
+    cond_region_list_t                     cond_regions_defined;   // source region for each ifdef
+    std::vector<std::set<std::string>>     typedefs_defined;
+    if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_regions_defined,
+                                                typedefs_defined, stmt_props_defined, replacements)) {
         return result;
     }
 
     // and the same for the "undefined" case:
     cond_region_list_t cond_regions_undefined;
     std::vector<std::set<std::string>> typedefs_undefined;
-    if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined, typedefs_undefined, replacements)) {
+    if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined,
+                                                 typedefs_undefined, stmt_props_undefined, replacements)) {
         return result;
     }
 
