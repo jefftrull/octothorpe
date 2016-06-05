@@ -70,6 +70,9 @@ include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 add_definitions( -std=c++14 )
 if (CMAKE_COMPILER_IS_GNUCC OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
   add_definitions(-Wall -Wextra -Werror)  # be conservative about checks
+  if( CMAKE_COMPILER_IS_GNUCXX )
+    set( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fuse-ld=gold" )
+  endif()
 endif()
 
 # without this we still get symbols but many things are optimized out
