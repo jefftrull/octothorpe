@@ -235,6 +235,10 @@ private:
     CondRange contents_incl_pp_; // including the enclosing directives (for cleanup) 
 };
 
+struct RegionStatementProperties {
+    std::size_t count;           // the number of statements found within the region
+};
+
 template<bool Sense>
 struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 {
@@ -245,10 +249,11 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     RangeNodes<clang::Decl> const& decls,
                     RangeNodes<clang::Stmt> const& stmts,
                     std::vector<std::vector<std::string>>& type_names,
+                    std::vector<RegionStatementProperties>& stmt_props,
                     clang::tooling::Replacements* replace)
         : mname_(mname), source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp),
           cond_regions_(cond_regions), ci_(nullptr), decls_(decls), stmts_(stmts),
-          type_names_(type_names), replace_(replace) {}
+          type_names_(type_names), stmt_props_(stmt_props), replace_(replace) {}
 
     ~SourceFileHooks() override {}
 
@@ -319,6 +324,14 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
             }
         }
 
+        // figure out how many statements there are in each region
+        // we won't add closures around code without statements
+        stmt_props_.resize(stmts_.size());
+        for (std::size_t i = 0; i < stmts_.size(); ++i) {
+            stmt_props_[i].count = stmts_[i].size();
+            // this is where we can record the statement text
+        }
+
         // create a specialization for this sense of the target macro
         std::string cond_class;
         if (Sense) {
@@ -354,6 +367,7 @@ private:
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
     std::vector<std::vector<std::string>>& type_names_;
+    std::vector<RegionStatementProperties>& stmt_props_;
     clang::tooling::Replacements * replace_;
 
     StringRef fn_;
@@ -518,6 +532,7 @@ int FindConditionalNodes(std::string                                           m
                          // result storage
                          std::vector<std::experimental::optional<CondRegion>>& cond_regions,
                          std::vector<std::set<std::string>>&                   typedefs,
+                         std::vector<RegionStatementProperties>&               stmt_props,
                          clang::tooling::Replacements&                         replacements)
 {
     using namespace clang;
@@ -537,7 +552,8 @@ int FindConditionalNodes(std::string                                           m
     // create callbacks for storing the conditional ranges as the preprocessor finds them
     SourceFileHooks<Sense>           source_hooks(mname, source_ranges, source_ranges_pp,
                                                   cond_regions, decls, stmts,
-                                                  type_names, &replacements);  // why replacements?
+                                                  type_names, stmt_props,
+                                                  &replacements);  // why replacements?
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
@@ -596,6 +612,7 @@ int main(int argc, char const **argv) {
     // build and run for "defined" case
     cond_region_list_t                     cond_regions_defined;   // source region for each ifdef
     std::vector<std::set<std::string>>     typedefs_defined;
+    std::vector<RegionStatementProperties> stmt_props_defined;
     if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_regions_defined,
                                                 typedefs_defined, stmt_props_defined, replacements)) {
         return result;
@@ -604,6 +621,7 @@ int main(int argc, char const **argv) {
     // and the same for the "undefined" case:
     cond_region_list_t cond_regions_undefined;
     std::vector<std::set<std::string>> typedefs_undefined;
+    std::vector<RegionStatementProperties> stmt_props_undefined;
     if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined,
                                                  typedefs_undefined, stmt_props_undefined, replacements)) {
         return result;
