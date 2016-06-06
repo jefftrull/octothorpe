@@ -10,6 +10,8 @@
  */
 
 #include <iostream>
+#include <iomanip>
+#include <fstream>
 #include <experimental/optional>
 
 #include "clang/AST/AST.h"
@@ -303,7 +305,10 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     print_source_range(std::cout, sm, lopt, stmt->getSourceRange());
                     std::cout << ";\n";
                 }
+            } else if (!decls_[i].empty()) {
+                std::cout << " contains declarations, but no statements\n";
             }
+
             // create a replacement that removes this conditional range (including PP directives)
             replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_pp_[i], true),
                                                   "", lopt));
@@ -508,6 +513,7 @@ int runToolOnFile(FactoryT*                            consumerFactory,
     args.push_back(fileName.c_str());
     // append -D for the "macro defined" case
     args.push_back("--");
+    args.push_back("-std=c++14");
     if (Sense) {
         std::string define_macro("-D");
         define_macro += mname;
@@ -524,6 +530,27 @@ int runToolOnFile(FactoryT*                            consumerFactory,
     RefactoringTool     tool(*compdb, comp_file_list);
 
     return tool.run(newFrontendActionFactory(consumerFactory, cb).get());    
+}
+
+template<bool Sense, typename FactoryT>
+int runToolOnString(FactoryT*                            consumerFactory,
+                    std::string                          mname,
+                    std::string                          contents,
+                    clang::tooling::SourceFileCallbacks* cb = nullptr) {
+    using namespace clang::tooling;
+    // create a fake command line of type Clang tools accept
+    std::vector<std::string> args;
+    // append -D for the "macro defined" case
+    args.push_back("-std=c++14");
+    if (Sense) {
+        std::string define_macro("-D");
+        define_macro += mname;
+        args.push_back(define_macro.c_str());
+    }
+
+    int result = runToolOnCodeWithArgs(newFrontendActionFactory(consumerFactory, cb)->create(),
+                                       contents, args);
+    return result;
 }
 
 template<bool Sense>
@@ -581,9 +608,7 @@ int FindConditionalNodes(std::string                                           m
 
     // remember the types that were defined in this condition
     typedefs.resize(type_names.size());
-    std::cerr << "copying " << type_names.size() << "type name sections:\n";
     for( std::size_t i = 0; i < type_names.size(); ++i) {
-        std::cerr << "    copying " << type_names[i].size() << " type names\n";
         // uniquify by range via set insertion
         std::copy(type_names[i].begin(), type_names[i].end(),
                   std::inserter(typedefs[i], typedefs[i].end()));
@@ -592,7 +617,147 @@ int FindConditionalNodes(std::string                                           m
     return 0;
 }
 
+// a list of variable names and types found captured by a single lambda
+struct capture_t {
+    std::string varname;
+    std::string vartype;
+    bool        is_const;            // presently unimplemented/unused
+};
+using capture_list_t = std::vector<capture_t>;
+
+// trick: instantiate one of these for each lambda we insert
+// that way we don't have to deal with interpreting the lambda name
+// callback will keep a reference to the statement region properties' capture list
+struct CaptureReporter : clang::ast_matchers::MatchFinder::MatchCallback {
+    CaptureReporter(capture_list_t& captures) : captures_(captures) {}
+    virtual void run(clang::ast_matchers::MatchFinder::MatchResult const& result) override {
+        using namespace clang;
+        LambdaExpr const * lambda = result.Nodes.getNodeAs<LambdaExpr>("lambda");
+        // record each of its captures
+        for (clang::LambdaCapture const & lc : lambda->captures()) {
+            if (lc.capturesVariable()) {
+                capture_t capture;
+                capture.varname = lc.getCapturedVar()->getQualifiedNameAsString();
+                capture.vartype = lc.getCapturedVar()->getType().getAsString();
+                std::cerr << "recording variable " << capture.varname << " type " << capture.vartype << "\n";
+                captures_.push_back(capture);
+            }
+        }
+    }
+private:
+    capture_list_t&  captures_;
+};
+
+// Edit text to surround conditional regions containing statements with a lambda capture
 using cond_region_list_t = std::vector<std::experimental::optional<CondRegion>>;
+std::string
+annotate_conditionals_with_lambdas(std::string const& body,
+                                   std::vector<RegionStatementProperties> const& stmt_props,
+                                   cond_region_list_t const & cond_regions) {
+    // create replacements list to add lambdas for this sense
+    using namespace clang::tooling;
+    Replacements replacements;
+    std::size_t lambda_counter = 0;
+    for (auto region : cond_regions) {
+        // the region may be empty, which indicates that it wasn't present, i.e.
+        // is the other sense of something that lacked an "else".  We want the indices
+        // to stay in sync with the other sense, so:
+        if (!region ||
+            !stmt_props[lambda_counter].count) { // also: no statements inside this region
+            lambda_counter++;
+            continue;
+        }
+
+        std::string closure_name("_cond_statement_closure_");
+        closure_name += std::to_string(lambda_counter++);
+        std::string lambda_start = "\nauto " + closure_name + " = [&]() {\n";
+        // a replacement to insert this at the beginning of the conditional region
+        auto cond_range = region->contents();
+        replacements.insert(
+            Replacement(cond_range.getBegin().getFilename(),
+                        cond_range.getBegin().getFileOffset(),
+                        0, lambda_start));
+        // close the end
+        std::string lambda_end("};\n");
+        lambda_end += closure_name + "();\n";   // execute lambda to retain semantic equivalence
+        replacements.insert(
+            Replacement(cond_range.getEnd().getFilename(),
+                        cond_range.getEnd().getFileOffset() + 1,
+                        0, lambda_end));
+    }
+
+    // perform replacements on string
+    return applyAllReplacements(body, replacements);
+}    
+
+// figure out the parameters of the static member function we will generate
+// by running matchers etc.
+template<bool Sense>
+std::vector<capture_list_t>
+vars_used(std::string const& mname,
+          std::string filename,
+          std::vector<RegionStatementProperties> const& stmt_props,
+          cond_region_list_t const& cond_regions) {
+
+    using namespace clang::tooling;
+    using namespace clang::ast_matchers;
+
+    // get file into a string
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("could not open file " + filename);
+    }
+    file.unsetf(std::ios::skipws);
+    std::string contents{std::istream_iterator<char>(file),
+                         std::istream_iterator<char>()};
+
+    // annotate file contents with lambdas surrounding conditionals containing statements
+    std::string annotatedContents = annotate_conditionals_with_lambdas(contents, stmt_props, cond_regions);
+
+    // Run capture analysis on the annotated contents to collect statements
+
+    std::vector<capture_list_t>     result(cond_regions.size());
+    std::vector<DeclarationMatcher> matchers;
+    std::vector<CaptureReporter>    reporters;
+
+    // create a set of matchers for the generated closures, with related callbacks
+    // to record each captured variable
+    MatchFinder finder;
+    for (std::size_t i = 0; i < cond_regions.size(); ++i) {
+        matchers.emplace_back(
+            varDecl(
+                hasType(autoType()),
+                matchesName("_cond_statement_closure_" + std::to_string(i)),
+                hasInitializer(
+                    cxxConstructExpr(
+                        hasDescendant(    // BOZO prefer to use something more specific?
+                            lambdaExpr().bind("lambda"))))));
+        reporters.emplace_back(result[i]);
+
+        if (!cond_regions[i] || !stmt_props[i].count) {
+            // a nonexistent region or one with no statements
+            continue;
+        }
+        // run matcher to map lambda names to capture list
+        finder.addMatcher(matchers[i], &reporters[i]);
+    }
+
+    // run tool with matchers and callbacks to produce result
+    runToolOnString<Sense>(&finder, mname, annotatedContents);
+
+    // return capture list
+    return result;
+}
+
+// actually generate a string containing the static member function
+// to implement
+template<bool Sense>
+std::string
+fn_wrap_statements(std::string statements,
+                   std::string fn_name,   // also macro name? or class name?
+                   capture_list_t const & params);
+
+
 int main(int argc, char const **argv) {
 
     using namespace clang;
@@ -625,6 +790,29 @@ int main(int argc, char const **argv) {
     if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined,
                                                  typedefs_undefined, stmt_props_undefined, replacements)) {
         return result;
+    }
+
+    // analyze statements in each conditional region
+    auto vars_defined = vars_used<true>(argv[1], argv[2], stmt_props_defined, cond_regions_defined);
+    std::cout << "TRUE case:\n";
+    for (std::size_t i = 0; i < vars_defined.size(); ++i) {
+        if (cond_regions_defined[i] && stmt_props_defined[i].count) {
+            std::cout << "capture expression " << i << " produced the following parameters:\n";
+            for (auto capture: vars_defined[i]) {
+                std::cout << capture.varname << " type " << capture.vartype << "\n";
+            }
+        }
+    }
+
+    auto vars_undefined = vars_used<false>(argv[1], argv[2], stmt_props_undefined, cond_regions_undefined);
+    std::cout << "FALSE case:\n";
+    for (std::size_t i = 0; i < vars_undefined.size(); ++i) {
+        if (cond_regions_undefined[i] && stmt_props_undefined[i].count) {
+            std::cout << "capture expression " << i << " produced the following parameters:\n";
+            for (auto capture: vars_undefined[i]) {
+                std::cout << capture.varname << " type " << capture.vartype << "\n";
+            }
+        }
     }
 
     // if any conditional regions have matching (in name) type declarations,
