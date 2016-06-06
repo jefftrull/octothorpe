@@ -690,31 +690,16 @@ annotate_conditionals_with_lambdas(std::string const& body,
     return applyAllReplacements(body, replacements);
 }    
 
-// figure out the parameters of the static member function we will generate
-// by running matchers etc.
+// take lambda-annotated code and produce a list of captures
 template<bool Sense>
 std::vector<capture_list_t>
-vars_used(std::string const& mname,
-          std::string filename,
-          std::vector<RegionStatementProperties> const& stmt_props,
-          cond_region_list_t const& cond_regions) {
+analyze_captures(std::string                            const& annotated_code,
+                 std::string                            const& mname,
+                 std::vector<RegionStatementProperties> const& stmt_props,
+                 cond_region_list_t                     const& cond_regions) {
 
     using namespace clang::tooling;
     using namespace clang::ast_matchers;
-
-    // get file into a string
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        throw std::runtime_error("could not open file " + filename);
-    }
-    file.unsetf(std::ios::skipws);
-    std::string contents{std::istream_iterator<char>(file),
-                         std::istream_iterator<char>()};
-
-    // annotate file contents with lambdas surrounding conditionals containing statements
-    std::string annotatedContents = annotate_conditionals_with_lambdas(contents, stmt_props, cond_regions);
-
-    // Run capture analysis on the annotated contents to collect statements
 
     std::vector<capture_list_t>     result(cond_regions.size());
     std::vector<DeclarationMatcher> matchers;
@@ -743,10 +728,36 @@ vars_used(std::string const& mname,
     }
 
     // run tool with matchers and callbacks to produce result
-    runToolOnString<Sense>(&finder, mname, annotatedContents);
+    runToolOnString<Sense>(&finder, mname, annotated_code);
 
     // return capture list
     return result;
+}
+
+
+// figure out the parameters of the static member function we will generate
+// by running matchers etc.
+template<bool Sense>
+std::vector<capture_list_t>
+vars_used(std::string const& mname,
+          std::string filename,
+          std::vector<RegionStatementProperties> const& stmt_props,
+          cond_region_list_t const& cond_regions) {
+
+    // get file into a string
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("could not open file " + filename);
+    }
+    file.unsetf(std::ios::skipws);
+    std::string contents{std::istream_iterator<char>(file),
+                         std::istream_iterator<char>()};
+
+    // annotate file contents with lambdas surrounding conditionals containing statements
+    std::string annotatedContents = annotate_conditionals_with_lambdas(contents, stmt_props, cond_regions);
+
+    // Run capture analysis on the annotated contents to collect statements
+    return analyze_captures<Sense>(annotatedContents, mname, stmt_props, cond_regions);
 }
 
 // actually generate a string containing the static member function
