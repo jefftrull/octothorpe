@@ -42,6 +42,7 @@ set( CLANG_AST_LIBS
 	clangBasic
 	clangDriver
 	clangEdit
+        clangFormat 
 	clangFrontend
 	clangFrontendTool
 	clangLex

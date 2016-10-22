@@ -252,10 +252,11 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
                     RangeNodes<clang::Stmt> const& stmts,
                     std::vector<std::vector<std::string>>& type_names,
                     std::vector<RegionStatementProperties>& stmt_props,
-                    clang::tooling::Replacements* replace)
+                    clang::tooling::Replacements* replace,
+                    std::string& preamble)
         : mname_(mname), source_ranges_(source_ranges), source_ranges_pp_(source_ranges_pp),
           cond_regions_(cond_regions), ci_(nullptr), decls_(decls), stmts_(stmts),
-          type_names_(type_names), stmt_props_(stmt_props), replace_(replace) {}
+          type_names_(type_names), stmt_props_(stmt_props), replace_(replace), preamble_(preamble) {}
 
     ~SourceFileHooks() override {}
 
@@ -310,8 +311,10 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
             }
 
             // create a replacement that removes this conditional range (including PP directives)
-            replace_->insert(tooling::Replacement(*sm, CharSourceRange(source_ranges_pp_[i], true),
-                                                  "", lopt));
+            if (replace_->add(tooling::Replacement(*sm, CharSourceRange(source_ranges_pp_[i], true),
+                                                   "", lopt))) {
+                throw std::logic_error("unable to create Replacement to remove conditional range");
+            }
         }
 
         // post-process bits of the AST we gathered to produce refactoring info that persists
@@ -358,9 +361,7 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
             }
         }
         cond_class += "};\n";
-
-        // create a Replacement from it
-        replace_->insert(tooling::Replacement(fn_, 0, 0, cond_class));  // insert at beginning
+        preamble_ += cond_class;
 
     }
 
@@ -374,6 +375,7 @@ private:
     std::vector<std::vector<std::string>>& type_names_;
     std::vector<RegionStatementProperties>& stmt_props_;
     clang::tooling::Replacements * replace_;
+    std::string&                   preamble_;
 
     StringRef fn_;
 };
@@ -560,7 +562,8 @@ int FindConditionalNodes(std::string                                           m
                          std::vector<std::experimental::optional<CondRegion>>& cond_regions,
                          std::vector<std::set<std::string>>&                   typedefs,
                          std::vector<RegionStatementProperties>&               stmt_props,
-                         clang::tooling::Replacements&                         replacements)
+                         clang::tooling::Replacements&                         replacements,
+                         std::string&                                          preamble)
 {
     using namespace clang;
     using namespace clang::tooling;
@@ -580,7 +583,7 @@ int FindConditionalNodes(std::string                                           m
     SourceFileHooks<Sense>           source_hooks(mname, source_ranges, source_ranges_pp,
                                                   cond_regions, decls, stmts,
                                                   type_names, stmt_props,
-                                                  &replacements);  // why replacements?
+                                                  &replacements, preamble);
 
     // use test hook to set up range matchers: after preprocessing, but before AST visitation
     MatchFinder           finder;
@@ -603,7 +606,8 @@ int FindConditionalNodes(std::string                                           m
         choose_condition += "#else\n";
         choose_condition += ("    using " + mname + "_t = " + mname + "_class<false>;\n");
         choose_condition += "#endif\n";
-        replacements.insert(Replacement(fileName, 0, 0, choose_condition));
+
+        preamble += choose_condition;
     }
 
     // remember the types that were defined in this condition
@@ -673,21 +677,25 @@ annotate_conditionals_with_lambdas(std::string const& body,
         std::string lambda_start = "\nauto " + closure_name + " = [&]() {\n";
         // a replacement to insert this at the beginning of the conditional region
         auto cond_range = region->contents();
-        replacements.insert(
-            Replacement(cond_range.getBegin().getFilename(),
-                        cond_range.getBegin().getFileOffset(),
-                        0, lambda_start));
+        if (replacements.add(
+                Replacement(cond_range.getBegin().getFilename(),
+                            cond_range.getBegin().getFileOffset(),
+                            0, lambda_start))) {
+            throw std::logic_error("unable to create Replacement from lambda preamble");
+        }
         // close the end
         std::string lambda_end("};\n");
         lambda_end += closure_name + "();\n";   // execute lambda to retain semantic equivalence
-        replacements.insert(
-            Replacement(cond_range.getEnd().getFilename(),
-                        cond_range.getEnd().getFileOffset() + 1,
-                        0, lambda_end));
+        if (replacements.add(
+                Replacement(cond_range.getEnd().getFilename(),
+                            cond_range.getEnd().getFileOffset() + 1,
+                            0, lambda_end))) {
+            throw std::logic_error("unable to create Replacement from lambda execution");
+        }
     }
 
     // perform replacements on string
-    return applyAllReplacements(body, replacements);
+    return applyAllReplacements(body, replacements).get();
 }    
 
 // take lambda-annotated code and produce a list of captures
@@ -784,13 +792,15 @@ int main(int argc, char const **argv) {
 
     // when tool run completes we will have the following data:
     tooling::Replacements replacements;             // modification instructions
+    std::string           preamble;                 // definitions inserted at top of file
 
     // build and run for "defined" case
     cond_region_list_t                     cond_regions_defined;   // source region for each ifdef
     std::vector<std::set<std::string>>     typedefs_defined;
     std::vector<RegionStatementProperties> stmt_props_defined;
     if (int result = FindConditionalNodes<true>(argv[1], argv[2], cond_regions_defined,
-                                                typedefs_defined, stmt_props_defined, replacements)) {
+                                                typedefs_defined, stmt_props_defined,
+                                                replacements, preamble)) {
         return result;
     }
 
@@ -799,7 +809,8 @@ int main(int argc, char const **argv) {
     std::vector<std::set<std::string>> typedefs_undefined;
     std::vector<RegionStatementProperties> stmt_props_undefined;
     if (int result = FindConditionalNodes<false>(argv[1], argv[2], cond_regions_undefined,
-                                                 typedefs_undefined, stmt_props_undefined, replacements)) {
+                                                 typedefs_undefined, stmt_props_undefined,
+                                                 replacements, preamble)) {
         return result;
     }
 
@@ -844,12 +855,20 @@ int main(int argc, char const **argv) {
                 [&](std::string const& t) {
                     // insert a using statement in the body:
                     std::string tdef("    using " + t + " = " + mname + "_t::" + t + ";\n");
-                    replacements.insert(
-                        tooling::Replacement(start.getFilename(),
-                                             start.getFileOffset(),
-                                             0, tdef));
+                    if (replacements.add(
+                            tooling::Replacement(start.getFilename(),
+                                                 start.getFileOffset(),
+                                                 0, tdef))) {
+                        throw std::logic_error("unable to create Replacement from using statement for type");
+                    };
                 }));
     }    
+
+    // finally add the class definition, specialization, and using statements
+    if (replacements.add(
+            tooling::Replacement(argv[2], 0, 0, preamble))) {
+        throw std::logic_error("failed to insert preamble as a Replacement");
+    }
 
     std::cerr << "replacements:\n";
     for ( auto const& rep : replacements ) {
