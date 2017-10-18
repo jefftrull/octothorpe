@@ -260,9 +260,8 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 
     ~SourceFileHooks() override {}
 
-    bool handleBeginSource(clang::CompilerInstance & ci, StringRef fn) override {
+    bool handleBeginSource(clang::CompilerInstance & ci) override {
         ci_ = &ci;
-        fn_ = fn;
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
@@ -377,7 +376,6 @@ private:
     clang::tooling::Replacements * replace_;
     std::string&                   preamble_;
 
-    StringRef fn_;
 };
 
 namespace custom_matchers {
@@ -524,12 +522,13 @@ int runToolOnFile(FactoryT*                            consumerFactory,
     // prepare tool arguments
     // avoiding the use of CommonOptionsParser, which uses statics...
     int args_c = args.size();
+    std::string error_msg;
     std::unique_ptr<FixedCompilationDatabase>
-        compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data()));
+        compdb(FixedCompilationDatabase::loadFromCommandLine(args_c, args.data(), error_msg));
     std::vector<std::string> comp_file_list(1, fileName);
 
     // define the tool from those options
-    RefactoringTool     tool(*compdb, comp_file_list);
+    RefactoringTool     tool(*compdb, llvm::ArrayRef<std::string>(comp_file_list));
 
     return tool.run(newFrontendActionFactory(consumerFactory, cb).get());    
 }
@@ -695,7 +694,11 @@ annotate_conditionals_with_lambdas(std::string const& body,
     }
 
     // perform replacements on string
-    return applyAllReplacements(body, replacements).get();
+    auto result = applyAllReplacements(body, replacements);
+    if (!result) {
+        throw std::logic_error("unable to create Replacement from lambda execution");
+    }
+    return result.get();
 }    
 
 // take lambda-annotated code and produce a list of captures
