@@ -65,8 +65,6 @@ set( CLANG_AST_LIBS
 
 set( Boost_USE_STATIC_LIBS ON )
 find_package( Boost 1.60 REQUIRED COMPONENTS system wave thread filesystem )
-include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-
 
 add_definitions( -std=c++14 )
 if (CMAKE_COMPILER_IS_GNUCC OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
@@ -109,10 +107,10 @@ else()
   # Boost.Wave (lexer) example
   add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
   add_executable( deadc0de analyze_conditionals.cpp )
-  set_target_properties( deadc0de PROPERTIES
-    # COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
-    LINK_LIBRARIES "${Boost_LIBRARIES};${CVC4_LIB};${GMP_LIB}"
-  )
-  target_include_directories( deadc0de SYSTEM PRIVATE "${Boost_INCLUDE_DIRS};${CVC4_ROOT}/include" )
+#  set_target_properties( deadc0de PROPERTIES
+#    COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
+#  )
+  target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost ${CVC4_ROOT}/lib/libcvc4.so  ${GMP_LIB} )
+  target_include_directories( deadc0de SYSTEM PRIVATE "${CVC4_ROOT}/include" )
   
 endif()
