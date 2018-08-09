@@ -57,6 +57,7 @@ set( CLANG_AST_LIBS
 	clangStaticAnalyzerCore
 	clangSerialization
 	clangToolingCore
+	clangToolingInclusions
 	clangTooling
         -Wl,--end-group
         ${LLVM_LIBS}
