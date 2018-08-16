@@ -387,15 +387,15 @@ AST_MATCHER_P(clang::Stmt,                statementInRange,
     // true if the statement node is entirely within the supplied range
     // i.e. they can be coterminous but the statement cannot start before or end after
     clang::SourceManager const& sm = Finder->getASTContext().getSourceManager();
-    return !sm.isBeforeInTranslationUnit(Node.getLocStart(), range.getBegin()) &&
-        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getLocEnd());
+    return !sm.isBeforeInTranslationUnit(Node.getBeginLoc(), range.getBegin()) &&
+        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getEndLoc());
 }
 
 AST_MATCHER_P(clang::Decl,                declInRange,
               clang::SourceRange,         range) {
     clang::SourceManager const& sm = Finder->getASTContext().getSourceManager();
-    return !sm.isBeforeInTranslationUnit(Node.getLocStart(), range.getBegin()) &&
-        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getLocEnd());
+    return !sm.isBeforeInTranslationUnit(Node.getBeginLoc(), range.getBegin()) &&
+        !sm.isBeforeInTranslationUnit(range.getEnd(), Node.getEndLoc());
 }
 
 // BOZO can we do the above polymorphically in the node type (decl/stmt)?
