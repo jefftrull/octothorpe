@@ -77,7 +77,7 @@ struct PPActions : clang::PPCallbacks
 
     void Ifdef(clang::SourceLocation loc,
                clang::Token const& tok,
-               clang::MacroDefinition const& md) override {
+               clang::MacroDefinition const&) override {
         // check for our target macro and sense
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
             // determine where the #ifdef macro ends
@@ -90,7 +90,7 @@ struct PPActions : clang::PPCallbacks
 
     void Ifndef(clang::SourceLocation loc,
                 clang::Token const& tok,
-                clang::MacroDefinition const& md) override {
+                clang::MacroDefinition const&) override {
         if (tok.getIdentifierInfo()->getName().str() == mname_) {
             auto tok_end = clang::Lexer::getLocForEndOfToken(tok.getLocation(),
                                                              0, sm_, lopt_);
