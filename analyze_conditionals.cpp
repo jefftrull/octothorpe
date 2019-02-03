@@ -138,6 +138,8 @@ struct tok_iterator :
     // not just the one we are wrapping here
     using base_iterator_type = typename BaseIterator::token_type::string_type::const_iterator;
 
+    tok_iterator();
+
     tok_iterator(BaseIterator it) : tok_iterator::iterator_adaptor_(it) {}
 
 private:
