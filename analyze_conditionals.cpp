@@ -15,6 +15,7 @@
 #include <boost/spirit/include/lex_lexertl.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
+#include <boost/spirit/include/support_istream_iterator.hpp>
 #include <boost/fusion/include/adapt_struct.hpp>
 
 #include <boost/wave.hpp>
@@ -487,18 +488,13 @@ int main(int argc, char **argv) {
         return 5;
     }
     cppfile.unsetf(ios::skipws);
-    // really we should use a forward iterator type on the stream directly
-    // but this doesn't seem to work with wave for some reason...
-    // just suck it all into memory :(
-    istream_iterator<char> fbeg(cppfile);
-    string cppstr(fbeg, istream_iterator<char>());
+    boost::spirit::istream_iterator fbeg(cppfile);
 
     // Give it a try
     cpplexer_token_t::position_type pos(fn);
 
     // create lexer token iterators from character iterators
-    auto cbeg = cppstr.begin();
-    cpplexer_iterator_t beg(cbeg, cppstr.end(), pos,
+    cpplexer_iterator_t beg(fbeg, boost::spirit::istream_iterator(), pos,
                                language_support(support_cpp|support_cpp0x));
     cpplexer_iterator_t end;
 
@@ -552,3 +548,5 @@ int main(int argc, char **argv) {
     }
     return 0;
 }
+
+#include <boost/wave/cpplexer/re2clex/cpp_re2c_lexer.hpp>
