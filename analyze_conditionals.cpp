@@ -12,7 +12,7 @@
 #include <iostream>
 #include <iomanip>
 
-#include <boost/spirit/include/lex_lexertl.hpp>
+#include <boost/spirit/include/lex.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
 #include <boost/spirit/include/support_istream_iterator.hpp>
@@ -20,7 +20,6 @@
 
 #include <boost/wave.hpp>
 #include <boost/wave/token_ids.hpp>
-#include <boost/wave/cpplexer/cpp_lex_token.hpp>
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 
 // CVC4 SMT engine includes
