@@ -10,6 +10,9 @@
 
 cmake_minimum_required( VERSION 2.8.12 )
 
+project( Octothorpe )
+
+set( CMAKE_CXX_STANDARD 14 )
 set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
 
 # we expect LLVM_ROOT to be defined
