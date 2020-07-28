@@ -265,7 +265,7 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
         // at this point the preprocessor has been initialized, so we cannot add definitions
         // we can, however, set up callbacks
         ci.getPreprocessor().addPPCallbacks(
-            llvm::make_unique<PPActions<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
+            std::make_unique<PPActions<Sense>>(ci.getLangOpts(), ci.getSourceManager(),
                                                 mname_, source_ranges_, source_ranges_pp_));
         // when the preprocessor runs it will update source_ranges as it finds conditionals
         return true;
@@ -322,9 +322,9 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
         for (std::size_t i = 0; i < decls_.size(); ++i) {
             for (auto decl : decls_[i]) {
                 if (clang::TypedefDecl const* td = llvm::dyn_cast<clang::TypedefDecl>(decl)) {
-                    type_names_[i].push_back(td->getName());
+                    type_names_[i].emplace_back(td->getName());
                 } else if (auto ud = llvm::dyn_cast<clang::UsingDecl>(decl)) {
-                    type_names_[i].push_back(ud->getName());
+                    type_names_[i].emplace_back(ud->getName());
                 }
                 // there should be no other types, actually, as we restrict to the
                 // above two in the Matcher

@@ -31,7 +31,7 @@ execute_process( COMMAND ${LLVM_ROOT}/build/bin/llvm-config --system-libs
 string( REPLACE " " ";" LLVM_SYSLIBS "${LLVM_SYSLIBS}" )
 
 include_directories( SYSTEM
-                     ${LLVM_ROOT}/tools/clang/include
+                     ${LLVM_ROOT}/clang/include
                      ${LLVM_ROOT}/build/tools/clang/include
                      ${LLVM_ROOT}/include
                    )
