@@ -8,36 +8,20 @@
 # 
 #
 
-cmake_minimum_required( VERSION 2.8.12 )
+cmake_minimum_required( VERSION 3.12 )
 
 project( Octothorpe )
 
 set( CMAKE_CXX_STANDARD 14 )
 set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
 
-# we expect LLVM_ROOT to be defined
-set( LLVM_ROOT "" CACHE PATH "path to the LLVM build containing the AST tools" )
-if( NOT LLVM_ROOT )
-  message( FATAL_ERROR "please set LLVM_ROOT to the root of your LLVM build" )
-endif()
+# We will pick up LLVM via the somewhat more modern "Config" route
+# so set CMAKE_PREFIX_PATH accordingly
 
-# get LLVM include and library deps
-execute_process( COMMAND ${LLVM_ROOT}/build/bin/llvm-config --cxxflags 
-  OUTPUT_VARIABLE LLVM_CXXFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE )
-execute_process( COMMAND ${LLVM_ROOT}/build/bin/llvm-config --ldflags
-  OUTPUT_VARIABLE LLVM_LDFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE )
-execute_process( COMMAND ${LLVM_ROOT}/build/bin/llvm-config --libs
-  OUTPUT_VARIABLE LLVM_LIBS OUTPUT_STRIP_TRAILING_WHITESPACE )
-string( REPLACE " " ";" LLVM_LIBS "${LLVM_LIBS}" )
-execute_process( COMMAND ${LLVM_ROOT}/build/bin/llvm-config --system-libs
-  OUTPUT_VARIABLE LLVM_SYSLIBS OUTPUT_STRIP_TRAILING_WHITESPACE )
-string( REPLACE " " ";" LLVM_SYSLIBS "${LLVM_SYSLIBS}" )
+find_package( Clang )
 
-include_directories( SYSTEM
-                     ${LLVM_ROOT}/clang/include
-                     ${LLVM_ROOT}/build/tools/clang/include
-                     ${LLVM_ROOT}/include
-                   )
+include_directories( SYSTEM ${CLANG_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} )
+
 
 # libs.  TODO: can I get llvm-config to list these for me somehow? Is there a consolidated lib?
 set( CLANG_AST_LIBS
@@ -72,7 +56,6 @@ set( CLANG_AST_LIBS
 set( Boost_USE_STATIC_LIBS ON )
 find_package( Boost 1.60 REQUIRED COMPONENTS system wave thread filesystem )
 
-add_definitions( -std=c++14 )
 if (CMAKE_COMPILER_IS_GNUCC OR (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"))
   add_definitions(-Wall -Wextra -Werror)  # be conservative about checks
   if( CMAKE_COMPILER_IS_GNUCXX )
@@ -85,10 +68,11 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
 
 # Clang-using example
 
+add_definitions( -fno-rtti )    # LLVM doesn't like RTTI
 add_executable( c2p conditional_to_policy.cpp )
 # Note Clang is normally compiled without exceptions or RTTI... tread carefully
 set_target_properties( c2p PROPERTIES
-  COMPILE_FLAGS "${LLVM_CXXFLAGS} -std=c++14 -fexceptions"
+  COMPILE_FLAGS "${LLVM_CXXFLAGS} -fexceptions"
   LINK_FLAGS "${LLVM_LDFLAGS}"
   LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
