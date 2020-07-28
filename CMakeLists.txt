@@ -27,26 +27,7 @@ include_directories( SYSTEM ${CLANG_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} )
 set( CLANG_AST_LIBS
         -Wl,--start-group
 	clangAST
-	clangAnalysis
-	clangBasic
-	clangDriver
-	clangEdit
-        clangFormat 
-	clangFrontend
-	clangFrontendTool
-	clangLex
-	clangParse
-	clangSema
-	clangEdit
 	clangASTMatchers
-	clangRewrite
-	clangRewriteFrontend
-	clangStaticAnalyzerFrontend
-	clangStaticAnalyzerCheckers
-	clangStaticAnalyzerCore
-	clangSerialization
-	clangToolingCore
-	clangToolingInclusions
 	clangTooling
         -Wl,--end-group
         ${LLVM_LIBS}
