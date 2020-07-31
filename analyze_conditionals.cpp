@@ -426,7 +426,6 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         BOOST_SPIRIT_DEBUG_NODE(line_end);
         BOOST_SPIRIT_DEBUG_NODE(textblock);
 
-        BOOST_SPIRIT_DEBUG_NODE(expr_parser_);
         BOOST_SPIRIT_DEBUG_NODE(cond_if);
         BOOST_SPIRIT_DEBUG_NODE(cond_ifdef);
         BOOST_SPIRIT_DEBUG_NODE(cond_ifndef);
