@@ -59,29 +59,18 @@ set_target_properties( c2p PROPERTIES
 )
 
 # Conditional compilation analysis of whole text example, using Boost.Wave and SMT 
-# Requires CVC4
+# Requires CVC4. User must ensure CVC4Config.cmake is in the CMAKE_PREFIX_PATH.
 
-# User is supposed to have supplied CVC4_ROOT on the CMake command line with -D
-set( CVC4_ROOT "" CACHE PATH "Path to the CVC4 build" )
-if( "${CVC4_ROOT}" STREQUAL "" )
+find_package( CVC4 )
+
+if( "${CVC4_FOUND}" STREQUAL "" )
   message( WARNING "No value provided for CVC4_ROOT; the deadc0de executable will not be built" )
 else()
-  find_library( CVC4_LIB cvc4 ${CVC4_ROOT}/lib )
-  if( NOT CVC4_LIB )
-    message( FATAL_ERROR "Cannot find the CVC4 library within ${CVC4_ROOT}/lib; did you compile it?" )
-  endif()
-  find_library( GMP_LIB gmp )
-  if( NOT GMP_LIB )
-    message( FATAL_ERROR "The GMP library is required for building preprocessor conditional analysis" )
-  endif()
 
-  # Boost.Wave (lexer) example
-  add_compile_options( -Wno-deprecated )        # CVC4 uses some old stuff
   add_executable( deadc0de analyze_conditionals.cpp )
 #  set_target_properties( deadc0de PROPERTIES
 #    COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
 #  )
-  target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost ${CVC4_ROOT}/lib/libcvc4.so  ${GMP_LIB} )
-  target_include_directories( deadc0de SYSTEM PRIVATE "${CVC4_ROOT}/include" )
+  target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost CVC4::cvc4 )
   
 endif()
