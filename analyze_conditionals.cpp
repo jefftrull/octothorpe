@@ -33,6 +33,7 @@ typedef boost::wave::cpplexer::lex_iterator<cpplexer_token_t> cpplexer_iterator_
 
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
+template<typename PositionT>
 struct spirit_compatible_token {
     typedef boost::wave::cpplexer::lex_token<>::string_type base_string_t;
     typedef base_string_t::const_iterator base_string_iter_t;
@@ -71,7 +72,7 @@ private:
     boost::wave::cpplexer::lex_token<> base_token_;
 
     friend std::ostream&
-    operator<< (std::ostream &os, spirit_compatible_token const& tok) {
+    operator<< (std::ostream &os, spirit_compatible_token<PositionT> const& tok) {
         using namespace boost::wave;
         auto id = token_id(tok.base_token_);
         os << get_token_name(id) << "(";
@@ -96,10 +97,8 @@ bool operator&&(bool a, spirit_compatible_token const& tok) {
 namespace boost { namespace spirit { namespace traits
 {
 
-template<>
-struct assign_to_container_from_value<
-    boost::iterator_range<spirit_compatible_token::base_string_iter_t>,
-    spirit_compatible_token>
+template<typename PositionT>
+struct assign_to_container_from_value<std::string, spirit_compatible_token<PositionT> >
 {
     static void 
     call(spirit_compatible_token const& tok,
@@ -125,13 +124,13 @@ struct char_type_of<spirit_compatible_token> {
 
 // Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
 // requires adding a special typedef and returning Spirit-compatible tokens
-template<typename BaseIterator>
+template<typename BaseIterator, typename PositionT>
 struct tok_iterator :
-    boost::iterator_adaptor<tok_iterator<BaseIterator>,
+    boost::iterator_adaptor<tok_iterator<BaseIterator, PositionT>,
                             BaseIterator,
-                            spirit_compatible_token,        // value type
-                            std::forward_iterator_tag,      // category we expect
-                            spirit_compatible_token const&> // reference type
+                            spirit_compatible_token<PositionT>, // value type
+                            std::forward_iterator_tag,          // category we expect
+                            spirit_compatible_token<PositionT> const&>     // reference type
 {
     // add the typedef that qi::token requires
     // this is actually the really really underlying one, i.e. character
@@ -145,19 +144,20 @@ struct tok_iterator :
 private:
     friend class boost::iterator_core_access;
 
-    spirit_compatible_token const& dereference() const {
-        result_ = spirit_compatible_token(
+    spirit_compatible_token<PositionT> const& dereference() const {
+        result_ = spirit_compatible_token<PositionT>(
             *tok_iterator::iterator_adaptor_::base_reference());
         return result_;
     }
 
-    spirit_compatible_token mutable result_;
+    spirit_compatible_token<PositionT> mutable result_;
 };
 
-template<typename BaseIterator>
-tok_iterator<BaseIterator>
+template<typename BaseIterator,
+         typename PositionT = typename BaseIterator::value_type::position_type>
+tok_iterator<BaseIterator, PositionT>
 make_tok_iterator(BaseIterator it) {
-    return tok_iterator<BaseIterator>(it);
+    return tok_iterator<BaseIterator, PositionT>(it);
 }
 
 // Parsing will produce text "sections": a set of lines and an associated condition
@@ -489,7 +489,8 @@ int main(int argc, char **argv) {
     boost::spirit::istream_iterator fbeg(cppfile);
 
     // Give it a try
-    cpplexer_token_t::position_type pos(fn);
+    using position_t = cpplexer_token_t::position_type;
+    position_t pos(fn);
 
     // create lexer token iterators from character iterators
     cpplexer_iterator_t beg(fbeg, boost::spirit::istream_iterator(), pos,
@@ -512,14 +513,14 @@ int main(int argc, char **argv) {
             return 2;
         } else if (xbeg != make_tok_iterator(end)) {
             cout << "only some input consumed. Remaining:\n";
-            copy(xbeg, xend, ostream_iterator<spirit_compatible_token>(cout, ""));
+            copy(xbeg, xend, ostream_iterator<spirit_compatible_token<position_t>>(cout, ""));
             return 2;
         }
         // make an assertion for the user input, if present
         if (argc == 3) {
             // an expression was supplied
             string expr(argv[1]);
-            cpplexer_token_t::position_type epos("command-line input");
+            position_t epos("command-line input");
             cpplexer_iterator_t ebeg(expr.begin(), expr.end(), pos,
                                         language_support(support_cpp|support_cpp0x));
             cpplexer_iterator_t eend;
