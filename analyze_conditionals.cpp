@@ -43,34 +43,24 @@ struct spirit_compatible_token {
 
     // requirements from Spirit V2
     typedef boost::wave::token_id id_type;
-    id_type id() const {
-        return wave_token_;   // via user-defined conversion to id_type
-    }
+    typedef base_string_iter_t iterator_type;
+    typedef boost::mpl::false_ has_state;
+    typedef base_string_t token_value_type;
 
     spirit_compatible_token() {}
     spirit_compatible_token(boost::wave::cpplexer::lex_token<> wave_token)
         : wave_token_(wave_token) {}
 
-    boost::iterator_range<base_string_t::const_iterator> value() const {
-        return boost::iterator_range<base_string_iter_t>(begin(), end());
+    id_type id() const {
+        return wave_token_;   // via user-defined conversion to id_type
     }
+    operator id_type() const { return static_cast<id_type>(id()); }
 
     bool eoi() const {
         return wave_token_.is_eoi();
     }
-    operator id_type() const { return static_cast<id_type>(id()); }
 
-    // provide two methods and a typedef so we can pretend to be a string
-    // this allows rules to concatenate token values together without
-    // extra Phoenix verbiage
-    base_string_iter_t begin() const {
-        return wave_token_.get_value().begin();
-    }
-    base_string_iter_t end() const {
-        return wave_token_.get_value().end();
-    }
-    typedef base_string_t::const_iterator const_iterator;
-            
+    token_value_type const& value() const { return wave_token_.get_value(); }
 
 private:
     boost::wave::cpplexer::lex_token<> wave_token_;
@@ -96,26 +86,26 @@ private:
 namespace boost { namespace spirit { namespace traits
 {
 
-template<typename PositionT>
-struct assign_to_container_from_value<std::string, spirit_compatible_token<PositionT> >
+template<typename PositionT, typename StringT>
+struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT> >
 {
     static void 
-    call(spirit_compatible_token const& tok,
-         boost::iterator_range<spirit_compatible_token::base_string_iter_t>& attr)
+    call(spirit_compatible_token<PositionT> const& tok, StringT& attr)
     {
-        attr = tok.value();
+        attr = tok.value().c_str();
     }
 };
 
-template<>
-struct is_string<spirit_compatible_token> : mpl::true_ {};
-
-template<>
-struct is_container<spirit_compatible_token> : mpl::true_ {};
-
-template<>
-struct char_type_of<spirit_compatible_token> {
-    typedef spirit_compatible_token::base_string_t::value_type type;
+template<typename PositionT>
+struct assign_to_container_from_value<boost::iterator_range<char const *>,
+                                      spirit_compatible_token<PositionT> >
+{
+    static void
+    call(spirit_compatible_token<PositionT> const& tok,
+         boost::iterator_range<char const *> & attr)
+    {
+        attr = boost::make_iterator_range(tok.value().begin(), tok.value().end());
+    }
 };
 
 }}}
