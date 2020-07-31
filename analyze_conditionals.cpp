@@ -518,6 +518,11 @@ int main(int argc, char **argv) {
             CVC4::Expr user_expr;
             pass = boost::spirit::qi::phrase_parse(xebeg, xeend, exprparser,
                                                    skipper<decltype(xebeg)>(), user_expr);
+            if (!pass)
+            {
+                std::cerr << "error parsing assume-expression \"" << argv[1] << "\"\n";
+                return 3;
+            }
             smt.assertFormula(user_expr);
         }
 
