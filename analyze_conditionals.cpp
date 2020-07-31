@@ -12,7 +12,7 @@
 #include <iostream>
 #include <iomanip>
 
-#include <boost/spirit/include/lex.hpp>
+#include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
 #include <boost/spirit/include/support_istream_iterator.hpp>
@@ -28,32 +28,35 @@
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
 
-typedef boost::wave::cpplexer::lex_token<> cpplexer_token_t;
-typedef boost::wave::cpplexer::lex_iterator<cpplexer_token_t> cpplexer_iterator_t;
+using cpplexer_token_t = boost::wave::cpplexer::lex_token<>;
+using cpplexer_iterator_t = boost::wave::cpplexer::lex_iterator<cpplexer_token_t>;
 
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
 template<typename PositionT>
 struct spirit_compatible_token {
+    // pretend to be a lexertl token with one attribute: a string
+    // model: lex::lexertl::token<base_string_iter_t, mpl::vector<base_string_t>, mpl::false_>
+
     typedef boost::wave::cpplexer::lex_token<>::string_type base_string_t;
     typedef base_string_t::const_iterator base_string_iter_t;
 
     // requirements from Spirit V2
     typedef boost::wave::token_id id_type;
     id_type id() const {
-        return base_token_;   // via user-defined conversion to id_type
+        return wave_token_;   // via user-defined conversion to id_type
     }
 
-    spirit_compatible_token(boost::wave::cpplexer::lex_token<> base_token)
-        : base_token_(base_token) {}
     spirit_compatible_token() {}
+    spirit_compatible_token(boost::wave::cpplexer::lex_token<> wave_token)
+        : wave_token_(wave_token) {}
 
     boost::iterator_range<base_string_t::const_iterator> value() const {
         return boost::iterator_range<base_string_iter_t>(begin(), end());
     }
 
     bool eoi() const {
-        return base_token_.is_eoi();
+        return wave_token_.is_eoi();
     }
     operator id_type() const { return static_cast<id_type>(id()); }
 
@@ -61,22 +64,22 @@ struct spirit_compatible_token {
     // this allows rules to concatenate token values together without
     // extra Phoenix verbiage
     base_string_iter_t begin() const {
-        return base_token_.get_value().begin();
+        return wave_token_.get_value().begin();
     }
     base_string_iter_t end() const {
-        return base_token_.get_value().end();
+        return wave_token_.get_value().end();
     }
     typedef base_string_t::const_iterator const_iterator;
             
 
 private:
-    boost::wave::cpplexer::lex_token<> base_token_;
+    boost::wave::cpplexer::lex_token<> wave_token_;
 
 #if defined(BOOST_SPIRIT_DEBUG)
     friend std::ostream&
     operator<< (std::ostream &os, spirit_compatible_token<PositionT> const& tok) {
         using namespace boost::wave;
-        auto id = token_id(tok.base_token_);
+        auto id = token_id(tok.wave_token_);
         os << get_token_name(id) << "(";
         if (id == T_NEWLINE) {
             os << "\\n";
@@ -116,7 +119,6 @@ struct char_type_of<spirit_compatible_token> {
 };
 
 }}}
-
 
 // Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
 // requires adding a special typedef and returning Spirit-compatible tokens
