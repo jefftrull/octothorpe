@@ -55,6 +55,7 @@ struct spirit_compatible_token {
     bool eoi() const {
         return base_token_.is_eoi();
     }
+    operator id_type() const { return static_cast<id_type>(id()); }
 
     // provide two methods and a typedef so we can pretend to be a string
     // this allows rules to concatenate token values together without
@@ -71,6 +72,7 @@ struct spirit_compatible_token {
 private:
     boost::wave::cpplexer::lex_token<> base_token_;
 
+#if defined(BOOST_SPIRIT_DEBUG)
     friend std::ostream&
     operator<< (std::ostream &os, spirit_compatible_token<PositionT> const& tok) {
         using namespace boost::wave;
@@ -84,14 +86,8 @@ private:
         os << ")" ;
         return os;
     }
-};
-
-// Help with debug by defining an operator so that a loop in simple_trace.hpp works
-#ifdef BOOST_SPIRIT_DEBUG
-bool operator&&(bool a, spirit_compatible_token const& tok) {
-    return a && !tok.eoi();
-}
 #endif
+};
 
 // Let Spirit know how to get data from our token into attributes
 namespace boost { namespace spirit { namespace traits
