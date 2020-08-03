@@ -23,7 +23,7 @@
 #include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 
 // CVC4 SMT engine includes
-#include "cvc4/smt/smt_engine.h"
+#include "cvc4/api/cvc4cpp.h"
 
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
@@ -150,47 +150,47 @@ make_tok_iterator(BaseIterator it) {
 
 // Parsing will produce text "sections": a set of lines and an associated condition
 struct text_section {
-    CVC4::Expr               condition;
+    CVC4::api::Term          condition;
     std::vector<std::string> body;
 };
 
 BOOST_FUSION_ADAPT_STRUCT(
     text_section,
-    (CVC4::Expr, condition)
+    (CVC4::api::Term, condition)
     (std::vector<std::string>, body)
 )
 
 // Proper use of CVC4 requires caching variables so we don't create two with the same name
 struct var_cache {
-    var_cache(CVC4::ExprManager& em) : em_(em) {}
+    var_cache(CVC4::api::Solver& slv) : slv_(slv) {}
 
-    CVC4::Expr   get_defined_expr(std::string varname) {
+    CVC4::api::Term   get_defined_expr(std::string varname) {
         // see if we have cached this variable representing defined(varname)
         auto it = defined_vars_.find(varname);
         if (it != defined_vars_.end()) {
             return it->second;
         }
         // give it a different name than the integer variable representing its value
-        CVC4::Expr var = em_.mkVar(varname + "_defined", em_.booleanType());
+        CVC4::api::Term var = slv_.mkConst(slv_.getBooleanSort(), varname + "_defined");
         defined_vars_.emplace(varname, var);
         return var;
     }
 
     // for building integer expressions
-    CVC4::Expr   get_integer_var(std::string varname) {
+    CVC4::api::Term   get_integer_var(std::string varname) {
         // check in cache first
         auto it = int_vars_.find(varname);
         if (it != int_vars_.end()) {
             return it->second;
         }
-        CVC4::Expr var = em_.mkVar(varname, em_.integerType());
+        CVC4::api::Term var = slv_.mkConst(slv_.getIntegerSort(), varname);
         int_vars_.emplace(varname, var);
         return var;
     }
 private:
-    CVC4::ExprManager& em_;
-    std::map<std::string, CVC4::Expr> int_vars_;
-    std::map<std::string, CVC4::Expr> defined_vars_;
+    CVC4::api::Solver& slv_;
+    std::map<std::string, CVC4::api::Term> int_vars_;
+    std::map<std::string, CVC4::api::Term> defined_vars_;
 };
 
 // Define a simple grammar using our adapted token iterator
@@ -205,10 +205,10 @@ private:
 };
 
 template<typename Iterator>
-struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::Expr(), skipper<Iterator>>
+struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::api::Term(), skipper<Iterator>>
 {
-    cond_expr(CVC4::ExprManager& em, var_cache& vars)
-        : cond_expr::base_type(bool_expr), em_(em), vars_(vars) {
+    cond_expr(CVC4::api::Solver& slv, var_cache& vars)
+        : cond_expr::base_type(bool_expr), slv_(slv), vars_(vars) {
         using boost::spirit::_1;
         using boost::spirit::_3;
         using boost::spirit::_a;
@@ -241,11 +241,11 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::Expr(), skipper<It
         conj_term = bool_term [ _val = _1 ]
             >> *(token(T_ANDAND) >> bool_term [
                      _val = phx::bind(&cond_expr::create_binary_expr,
-                                      this, CVC4::kind::AND, _val, _1)]) ;
+                                      this, CVC4::api::AND, _val, _1)]) ;
         disj_term = conj_term [ _val = _1 ]
             >> *(token(T_OROR) >> conj_term [
                      _val = phx::bind(&cond_expr::create_binary_expr,
-                                      this, CVC4::kind::OR, _val, _1)]) ;
+                                      this, CVC4::api::OR, _val, _1)]) ;
 
         // parsing a subset of real expressions here, for now
         // we only compare ints, never compute with them
@@ -258,19 +258,19 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::Expr(), skipper<It
         int_comp =
             (int_term >> token(T_EQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::kind::EQUAL, _1, _3) ]
+                                 this, CVC4::api::EQUAL, _1, _3) ]
           | (int_term >> token(T_LESS) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::kind::LT, _1, _3) ]
+                                 this, CVC4::api::LT, _1, _3) ]
           | (int_term >> token(T_GREATER) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::kind::GT, _1, _3) ]
+                                 this, CVC4::api::GT, _1, _3) ]
           | (int_term >> token(T_LESSEQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::kind::LEQ, _1, _3) ]
+                                 this, CVC4::api::LEQ, _1, _3) ]
           | (int_term >> token(T_GREATEREQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::kind::GEQ, _1, _3) ] ;
+                                 this, CVC4::api::GEQ, _1, _3) ] ;
 
         bool_expr = int_comp | disj_term ;
 
@@ -288,21 +288,21 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::Expr(), skipper<It
 
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
-    using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::Expr(), skipper<Iterator>>;
+    using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::api::Term(), skipper<Iterator>>;
     expr_rule_t defined, cond_inv, bool_term, conj_term, disj_term, int_term, int_comp, paren_term, bool_expr;
 
     // for building logical expressions
-    CVC4::ExprManager& em_;
+    CVC4::api::Solver& slv_;
     var_cache&         vars_;
 
-    CVC4::Expr   create_inverted_expr(CVC4::Expr e) {
-        return e.notExpr();
+    CVC4::api::Term   create_inverted_expr(CVC4::api::Term e) {
+        return e.notTerm();
     }
-    CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
-        return em_.mkExpr(op, e1, e2);
+    CVC4::api::Term   create_binary_expr(CVC4::api::Kind op, CVC4::api::Term e1, CVC4::api::Term e2) {
+        return slv_.mkTerm(op, e1, e2);
     }
-    CVC4::Expr   create_integer_const(std::string int_literal) {
-        return em_.mkConst(CVC4::Rational(int_literal));
+    CVC4::api::Term   create_integer_const(std::string int_literal) {
+        return slv_.mkReal(int_literal);  // mkReal encompasses float, integer, and rational
     }
 };
 
@@ -312,8 +312,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                                  std::vector<text_section>(),
                                                  skipper<Iterator>>
 {
-    cond_grammar(CVC4::ExprManager& em, var_cache& vars)
-        : cond_grammar::base_type(tunit), em_(em), vars_(vars), expr_parser_(em, vars_) {
+    cond_grammar(CVC4::api::Solver& slv, var_cache& vars)
+        : cond_grammar::base_type(tunit), slv_(slv), vars_(vars), expr_parser_(slv, vars_) {
         using boost::spirit::_1;
         using boost::spirit::_a;
         using boost::spirit::_b;
@@ -335,14 +335,14 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                       token(T_PP_ELIF) |
                       token(T_PP_ENDIF)))
             >> *(token - line_end) >> line_end ;
-        textblock = attr(phx::construct<CVC4::Expr>(_r1)) // conditional for a textblock is just whatever it inherited
+        textblock = attr(phx::construct<CVC4::api::Term>(_r1)) // conditional for a textblock is just whatever it inherited
             >> +textline ;
 
         cond_if = token(T_PP_IF)
             >> expr_parser_[_a = _r1, _b = _1] >> line_end
             // both the inherited condition and the new one must be true:
             >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                   this, CVC4::kind::AND, _a, _b))[
+                                   this, CVC4::api::AND, _a, _b))[
                         phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                    ]
             // update "condition so far"
@@ -353,7 +353,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    *(token(T_PP_ELIF)
                     >> expr_parser_[_b = _1] >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::kind::AND, _a, _b))[
+                                        this, CVC4::api::AND, _a, _b))[
                             phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                    ]
                     >> eps[
@@ -373,7 +373,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                   ]
               >>  line_end
               >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                     this, CVC4::kind::AND, _r1, _a))[
+                                     this, CVC4::api::AND, _r1, _a))[
                         phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
@@ -394,7 +394,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::kind::AND, _r1, _a))[
+                                        this, CVC4::api::AND, _r1, _a))[
                             phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
@@ -425,36 +425,36 @@ private:
     boost::spirit::qi::rule<Iterator, std::string()> line_end;
     boost::spirit::qi::rule<Iterator, std::string()> textline;   // no skipper! Keep as-is.
     // a textblock is a single section of non-conditional lines
-    boost::spirit::qi::rule<Iterator, text_section(CVC4::Expr)> textblock;
+    boost::spirit::qi::rule<Iterator, text_section(CVC4::api::Term)> textblock;
 
     boost::spirit::qi::rule<Iterator, std::vector<text_section>(), skipper<Iterator>> tunit, toplvl;
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>>
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>>
         basic;
 
     // cond_ifdef/cond_ifndef need an attribute for remembering the macro name
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>,
-                            boost::spirit::locals<CVC4::Expr>> cond_ifdef, cond_ifndef;
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>,
+                            boost::spirit::locals<CVC4::api::Term>> cond_ifdef, cond_ifndef;
 
     // cond_if needs a local attribute for remembering conditions, and one for
     // accumulating conditions from elif's
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::Expr), skipper<Iterator>,
-                            boost::spirit::locals<CVC4::Expr, CVC4::Expr>> cond_if;
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>,
+                            boost::spirit::locals<CVC4::api::Term, CVC4::api::Term>> cond_if;
 
     // for building logical expressions
-    CVC4::ExprManager&  em_;
+    CVC4::api::Solver&  slv_;
     var_cache&          vars_;
     cond_expr<Iterator> expr_parser_;
 
-    CVC4::Expr   create_binary_expr(CVC4::Kind op, CVC4::Expr e1, CVC4::Expr e2) {
-        return em_.mkExpr(op, e1, e2);
+    CVC4::api::Term   create_binary_expr(CVC4::api::Kind op, CVC4::api::Term e1, CVC4::api::Term e2) {
+        return slv_.mkTerm(op, e1, e2);
     }
     // e1 && !e2
     // useful for "else" clauses
-    CVC4::Expr   create_inv_qual_expr(CVC4::Expr e1, CVC4::Expr e2) {
-        return e1.andExpr(e2.notExpr());
+    CVC4::api::Term   create_inv_qual_expr(CVC4::api::Term e1, CVC4::api::Term e2) {
+        return e1.andTerm(e2.notTerm());
     }
-    CVC4::Expr   create_boolean_const(bool b) {
-        return em_.mkConst(b);
+    CVC4::api::Term   create_boolean_const(bool b) {
+        return slv_.mkBoolean(b);
     }
 };
 
@@ -488,10 +488,9 @@ int main(int argc, char **argv) {
     // create Spirit V2-compatible iterators from lexer iterators
     auto xbeg = make_tok_iterator(beg);
     auto xend = make_tok_iterator(end);
-    CVC4::ExprManager em;
-    CVC4::SmtEngine   smt(&em);
-    var_cache         vars(em);      // global so we can share with user expression parser
-    cond_grammar<decltype(xbeg)> fileparser(em, vars);
+    CVC4::api::Solver slv;
+    var_cache         vars(slv);     // global so we can share with user expression parser
+    cond_grammar<decltype(xbeg)> fileparser(slv, vars);
     vector<text_section> result;
     bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, fileparser,
                                                 skipper<decltype(xbeg)>(), result);
@@ -514,8 +513,8 @@ int main(int argc, char **argv) {
             cpplexer_iterator_t eend;
             auto xebeg = make_tok_iterator(ebeg);
             auto xeend = make_tok_iterator(eend);
-            cond_expr<decltype(xebeg)> exprparser(em, vars);
-            CVC4::Expr user_expr;
+            cond_expr<decltype(xebeg)> exprparser(slv, vars);
+            CVC4::api::Term user_expr;
             pass = boost::spirit::qi::phrase_parse(xebeg, xeend, exprparser,
                                                    skipper<decltype(xebeg)>(), user_expr);
             if (!pass)
@@ -523,13 +522,13 @@ int main(int argc, char **argv) {
                 std::cerr << "error parsing assume-expression \"" << argv[1] << "\"\n";
                 return 3;
             }
-            smt.assertFormula(user_expr);
+            slv.assertFormula(user_expr);
         }
 
         for (auto const& s : result) {
-            if (smt.checkSat(s.condition) != CVC4::Result::SAT) {
+            if (slv.checkSatAssuming(s.condition).isUnsat()) {
                 cout << "detected a dead code section with condition ";
-                cout << smt.simplify(s.condition) << ":\n";
+                cout << slv.simplify(s.condition) << ":\n";
                 copy(s.body.begin(), s.body.end(),
                      ostream_iterator<string>(cout, ""));
             }
