@@ -87,7 +87,7 @@ namespace boost { namespace spirit { namespace traits
 {
 
 template<typename PositionT, typename StringT>
-struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT> >
+struct assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
 {
     static void 
     call(spirit_compatible_token<PositionT> const& tok, StringT& attr)
@@ -95,9 +95,14 @@ struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT
         attr = tok.value().c_str();
     }
 };
+template<typename PositionT, typename StringT>
+struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT> >
+    : assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
+{};
+
 
 template<typename PositionT>
-struct assign_to_container_from_value<boost::iterator_range<char const *>,
+struct assign_to_attribute_from_value<boost::iterator_range<char const *>,
                                       spirit_compatible_token<PositionT> >
 {
     static void
@@ -107,6 +112,12 @@ struct assign_to_container_from_value<boost::iterator_range<char const *>,
         attr = boost::make_iterator_range(tok.value().begin(), tok.value().end());
     }
 };
+template<typename PositionT>
+struct assign_to_container_from_value<boost::iterator_range<char const *>,
+                                      spirit_compatible_token<PositionT> >
+    : assign_to_attribute_from_value<boost::iterator_range<char const *>,
+                                     spirit_compatible_token<PositionT> >
+{};
 
 }}}
 
