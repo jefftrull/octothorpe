@@ -345,7 +345,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                       token(T_PP_ELSE) |
                       token(T_PP_ELIF) |
                       token(T_PP_ENDIF)))
-            >> *(token - line_end) >> line_end ;
+            >> *(token - line_end)[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))]
+            >> line_end[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))] ;
         textblock = attr(phx::construct<CVC4::api::Term>(_r1)) // conditional for a textblock is just whatever it inherited
             >> +textline ;
 
