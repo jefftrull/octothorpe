@@ -339,14 +339,20 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         line_end = token(T_NEWLINE) | token(T_CPPCOMMENT) ;  // Wave absorbs trailing \n
 
+        // semantic action to append string attributes
+        auto append = [](auto & dst, auto const & src)
+        {
+            dst.insert(std::end(dst), std::begin(src), std::end(src));
+        };
+
         textline = (!(token(T_PP_IF) |
                       token(T_PP_IFDEF) |
                       token(T_PP_IFNDEF) |
                       token(T_PP_ELSE) |
                       token(T_PP_ELIF) |
                       token(T_PP_ENDIF)))
-            >> *(token - line_end)[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))]
-            >> line_end[phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))] ;
+            >> *(token - line_end)[phx::bind(append, _val, _1)]
+            >> line_end[phx::bind(append, _val, _1)] ;
         textblock = attr(phx::construct<CVC4::api::Term>(_r1)) // conditional for a textblock is just whatever it inherited
             >> +textline ;
 
@@ -355,7 +361,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             // both the inherited condition and the new one must be true:
             >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
                                    this, CVC4::api::AND, _a, _b))[
-                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                        phx::bind(append, _val, _1)
                    ]
             // update "condition so far"
             >>    eps[
@@ -366,7 +372,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                     >> expr_parser_[_b = _1] >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
                                         this, CVC4::api::AND, _a, _b))[
-                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                            phx::bind(append, _val, _1)
                    ]
                     >> eps[
                         // accumulate condition
@@ -374,7 +380,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                         ])
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(_a)[
-                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                        phx::bind(append, _val, _1)
                     ])
             >>    token(T_PP_ENDIF) >> line_end ;
 
@@ -386,12 +392,12 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
               >>  line_end
               >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
                                      this, CVC4::api::AND, _r1, _a))[
-                        phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                        phx::bind(append, _val, _1)
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_inv_qual_expr,
                                         this, _r1, _a))[
-                           phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                           phx::bind(append, _val, _1)
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
 
@@ -402,12 +408,12 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    line_end
             >>    *basic(phx::bind(&cond_grammar::create_inv_qual_expr,
                                    this, _r1, _a))[
-                       phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                       phx::bind(append, _val, _1)
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
                                         this, CVC4::api::AND, _r1, _a))[
-                            phx::insert(_val, phx::end(_val), phx::begin(_1), phx::end(_1))
+                            phx::bind(append, _val, _1)
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
 
