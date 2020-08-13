@@ -28,18 +28,17 @@
 // make a Spirit V2-compatible lexer
 // analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
 
-using cpplexer_token_t = boost::wave::cpplexer::lex_token<>;
-using cpplexer_iterator_t = boost::wave::cpplexer::lex_iterator<cpplexer_token_t>;
-
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
-template<typename PositionT>
-struct spirit_compatible_token {
+template<typename PositionT = boost::wave::util::file_position_type>
+struct spirit_compatible_token : boost::wave::cpplexer::lex_token<PositionT>
+{
     // pretend to be a lexertl token with one attribute: a string
     // model: lex::lexertl::token<base_string_iter_t, mpl::vector<base_string_t>, mpl::false_>
 
-    typedef boost::wave::cpplexer::lex_token<>::string_type base_string_t;
-    typedef base_string_t::const_iterator base_string_iter_t;
+    typedef typename boost::wave::cpplexer::lex_token<PositionT> base_type;
+    typedef typename base_type::string_type base_string_t;
+    typedef typename base_string_t::const_iterator base_string_iter_t;
 
     // requirements from Spirit V2
     typedef boost::wave::token_id id_type;
@@ -48,33 +47,29 @@ struct spirit_compatible_token {
     typedef base_string_t token_value_type;
 
     spirit_compatible_token() {}
-    spirit_compatible_token(boost::wave::cpplexer::lex_token<> wave_token)
-        : wave_token_(wave_token) {}
+    spirit_compatible_token(int dummy) : base_type(dummy) {}
+    spirit_compatible_token(id_type id, token_value_type value, PositionT pos)
+        : base_type(id, value, pos) {}
 
     id_type id() const {
-        return wave_token_;   // via user-defined conversion to id_type
+        return static_cast<base_type const&>(*this);   // via user-defined conversion to id_type
     }
-    operator id_type() const { return static_cast<id_type>(id()); }
+    operator id_type() const { return id(); }
 
     bool eoi() const {
-        return wave_token_.is_eoi();
+        return static_cast<base_type const&>(*this).is_eoi();
     }
-
-    token_value_type const& value() const { return wave_token_.get_value(); }
-
-private:
-    boost::wave::cpplexer::lex_token<> wave_token_;
 
 #if defined(BOOST_SPIRIT_DEBUG)
     friend std::ostream&
     operator<< (std::ostream &os, spirit_compatible_token<PositionT> const& tok) {
         using namespace boost::wave;
-        auto id = token_id(tok.wave_token_);
+        auto id = token_id(tok);
         os << get_token_name(id) << "(";
         if (id == T_NEWLINE) {
             os << "\\n";
         } else {
-            os << tok.value();
+            os << tok.get_value();
         }
         os << ")" ;
         return os;
@@ -82,17 +77,32 @@ private:
 #endif
 };
 
-// Let Spirit know how to get data from our token into attributes
+//
+// Spirit V2 helper function requirements for token (see lex/lexer/lexertl/token.hpp)
+//
+
+template <typename Position>
+inline bool
+token_is_valid(spirit_compatible_token<Position> const& t)
+{
+    return t.is_valid();
+}
+
+//
+// Spirit V2 customization points
+//
+
 namespace boost { namespace spirit { namespace traits
 {
 
+// Let Spirit know how to get data from our token into attributes
 template<typename PositionT, typename StringT>
 struct assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
 {
     static void 
     call(spirit_compatible_token<PositionT> const& tok, StringT& attr)
     {
-        attr = tok.value().c_str();
+        attr = tok.get_value().c_str();
     }
 };
 template<typename PositionT, typename StringT>
@@ -109,7 +119,7 @@ struct assign_to_attribute_from_value<boost::iterator_range<char const *>,
     call(spirit_compatible_token<PositionT> const& tok,
          boost::iterator_range<char const *> & attr)
     {
-        attr = boost::make_iterator_range(tok.value().begin(), tok.value().end());
+        attr = boost::make_iterator_range(tok.get_value().begin(), tok.get_value().end());
     }
 };
 template<typename PositionT>
@@ -119,45 +129,41 @@ struct assign_to_container_from_value<boost::iterator_range<char const *>,
                                      spirit_compatible_token<PositionT> >
 {};
 
+///////////////////////////////////////////////////////////////////////////
+// Overload debug output for a single token, this integrates lexer tokens
+// with Qi's simple_trace debug facilities
+template <typename PositionT>
+struct token_printer_debug<spirit_compatible_token<PositionT> >
+{
+    typedef spirit_compatible_token<PositionT> token_type;
+
+    template <typename Out>
+    static void print(Out& out, token_type const& val)
+    {
+        out << '[' << val << ']';
+    }
+};
+
 }}}
 
 // Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
 // requires adding a special typedef and returning Spirit-compatible tokens
-template<typename BaseIterator, typename PositionT>
-struct tok_iterator :
-    boost::iterator_adaptor<tok_iterator<BaseIterator, PositionT>,
-                            BaseIterator,
-                            spirit_compatible_token<PositionT>, // value type
-                            std::forward_iterator_tag,          // category we expect
-                            spirit_compatible_token<PositionT> const&>     // reference type
+template<typename TokenT>
+struct tok_iterator : boost::wave::cpplexer::lex_iterator<TokenT>
 {
+    using base_type = boost::wave::cpplexer::lex_iterator<TokenT>;
+    using position_type = typename TokenT::position_type;
+
     // add the typedef that qi::token requires
-    // this is actually the really really underlying one, i.e. character
-    // not just the one we are wrapping here
-    using base_iterator_type = typename BaseIterator::token_type::string_type::const_iterator;
+    using base_iterator_type = typename TokenT::string_type::const_iterator;
 
-    tok_iterator();
+    // forward constructors
+    tok_iterator() {}
+    template<typename IteratorT>
+    tok_iterator(IteratorT beg, IteratorT end, position_type pos, boost::wave::language_support lang)
+        : base_type(beg, end, pos, lang) {}
 
-    tok_iterator(BaseIterator it) : tok_iterator::iterator_adaptor_(it) {}
-
-private:
-    friend class boost::iterator_core_access;
-
-    spirit_compatible_token<PositionT> const& dereference() const {
-        result_ = spirit_compatible_token<PositionT>(
-            *tok_iterator::iterator_adaptor_::base_reference());
-        return result_;
-    }
-
-    spirit_compatible_token<PositionT> mutable result_;
 };
-
-template<typename BaseIterator,
-         typename PositionT = typename BaseIterator::value_type::position_type>
-tok_iterator<BaseIterator, PositionT>
-make_tok_iterator(BaseIterator it) {
-    return tok_iterator<BaseIterator, PositionT>(it);
-}
 
 // Parsing will produce text "sections": a set of lines and an associated condition
 struct text_section {
@@ -495,30 +501,30 @@ int main(int argc, char **argv) {
     boost::spirit::istream_iterator fbeg(cppfile);
 
     // Give it a try
-    using position_t = cpplexer_token_t::position_type;
+    using token_t = spirit_compatible_token<>;
+    using position_t = token_t::position_type;
     position_t pos(fn);
 
-    // create lexer token iterators from character iterators
+    // create Spirit V2-compatible lexer token iterators from character iterators
+    using cpplexer_iterator_t = tok_iterator<token_t>;
     cpplexer_iterator_t beg(fbeg, boost::spirit::istream_iterator(), pos,
                                language_support(support_cpp|support_cpp0x));
     cpplexer_iterator_t end;
 
-    // create Spirit V2-compatible iterators from lexer iterators
-    auto xbeg = make_tok_iterator(beg);
-    auto xend = make_tok_iterator(end);
     CVC4::api::Solver slv;
     var_cache         vars(slv);     // global so we can share with user expression parser
-    cond_grammar<decltype(xbeg)> fileparser(slv, vars);
+    cond_grammar<decltype(beg)> fileparser(slv, vars);
     vector<text_section> result;
-    bool pass = boost::spirit::qi::phrase_parse(xbeg, xend, fileparser,
-                                                skipper<decltype(xbeg)>(), result);
+    auto start = beg;
+    bool pass = boost::spirit::qi::phrase_parse(beg, end, fileparser,
+                                                skipper<decltype(beg)>(), result);
     if (pass) {
-        if (xbeg == make_tok_iterator(beg)) {
+        if (beg == start) {
             cout << "no input consumed!\n";
             return 2;
-        } else if (xbeg != make_tok_iterator(end)) {
+        } else if (beg != end) {
             cout << "only some input consumed. Remaining:\n";
-            copy(xbeg, xend, ostream_iterator<spirit_compatible_token<position_t>>(cout, ""));
+            copy(beg, end, ostream_iterator<spirit_compatible_token<position_t>>(cout, ""));
             return 2;
         }
         // make an assertion for the user input, if present
@@ -529,12 +535,11 @@ int main(int argc, char **argv) {
             cpplexer_iterator_t ebeg(expr.begin(), expr.end(), pos,
                                         language_support(support_cpp|support_cpp0x));
             cpplexer_iterator_t eend;
-            auto xebeg = make_tok_iterator(ebeg);
-            auto xeend = make_tok_iterator(eend);
-            cond_expr<decltype(xebeg)> exprparser(slv, vars);
+
+            cond_expr<decltype(ebeg)> exprparser(slv, vars);
             CVC4::api::Term user_expr;
-            pass = boost::spirit::qi::phrase_parse(xebeg, xeend, exprparser,
-                                                   skipper<decltype(xebeg)>(), user_expr);
+            pass = boost::spirit::qi::phrase_parse(ebeg, eend, exprparser,
+                                                   skipper<decltype(ebeg)>(), user_expr);
             if (!pass)
             {
                 std::cerr << "error parsing assume-expression \"" << argv[1] << "\"\n";
