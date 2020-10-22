@@ -57,12 +57,12 @@ struct spirit_compatible_token : boost::wave::cpplexer::lex_token<PositionT>
     operator id_type() const { return id(); }
 
     bool eoi() const {
-        return static_cast<base_type const&>(*this).is_eoi();
+        return static_cast<base_type const &>(*this).is_eoi();
     }
 
 #if defined(BOOST_SPIRIT_DEBUG)
     friend std::ostream&
-    operator<< (std::ostream &os, spirit_compatible_token<PositionT> const& tok) {
+    operator<< (std::ostream &os, spirit_compatible_token<PositionT> const & tok) {
         using namespace boost::wave;
         auto id = token_id(tok);
         os << get_token_name(id) << "(";
@@ -83,7 +83,7 @@ struct spirit_compatible_token : boost::wave::cpplexer::lex_token<PositionT>
 
 template <typename Position>
 inline bool
-token_is_valid(spirit_compatible_token<Position> const& t)
+token_is_valid(spirit_compatible_token<Position> const & t)
 {
     return t.is_valid();
 }
@@ -100,7 +100,7 @@ template<typename PositionT, typename StringT>
 struct assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
 {
     static void 
-    call(spirit_compatible_token<PositionT> const& tok, StringT& attr)
+    call(spirit_compatible_token<PositionT> const & tok, StringT & attr)
     {
         attr = tok.get_value().c_str();
     }
@@ -116,7 +116,7 @@ struct assign_to_attribute_from_value<boost::iterator_range<char const *>,
                                       spirit_compatible_token<PositionT> >
 {
     static void
-    call(spirit_compatible_token<PositionT> const& tok,
+    call(spirit_compatible_token<PositionT> const & tok,
          boost::iterator_range<char const *> & attr)
     {
         attr = boost::make_iterator_range(tok.get_value().begin(), tok.get_value().end());
@@ -138,7 +138,7 @@ struct token_printer_debug<spirit_compatible_token<PositionT> >
     typedef spirit_compatible_token<PositionT> token_type;
 
     template <typename Out>
-    static void print(Out& out, token_type const& val)
+    static void print(Out& out, token_type const & val)
     {
         out << '[' << val << ']';
     }
@@ -548,7 +548,7 @@ int main(int argc, char **argv) {
             slv.assertFormula(user_expr);
         }
 
-        for (auto const& s : result) {
+        for (auto const & s : result) {
             if (slv.checkSatAssuming(s.condition).isUnsat()) {
                 cout << "detected a dead code section with condition ";
                 cout << slv.simplify(s.condition) << ":\n";
