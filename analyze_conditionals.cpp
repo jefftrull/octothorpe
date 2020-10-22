@@ -31,20 +31,24 @@
 // we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
 // compatible with qi::token
 template<typename PositionT = boost::wave::util::file_position_type>
-struct spirit_compatible_token : boost::wave::cpplexer::lex_token<PositionT>
+class spirit_compatible_token : private boost::wave::cpplexer::lex_token<PositionT>
 {
     // pretend to be a lexertl token with one attribute: a string
     // model: lex::lexertl::token<base_string_iter_t, mpl::vector<base_string_t>, mpl::false_>
 
     typedef typename boost::wave::cpplexer::lex_token<PositionT> base_type;
+
+public:
     typedef typename base_type::string_type base_string_t;
-    typedef typename base_string_t::const_iterator base_string_iter_t;
+    typedef typename base_type::string_type string_type;
+    typedef typename string_type::const_iterator base_string_iter_t;
+    typedef          PositionT position_type;
 
     // requirements from Spirit V2
     typedef boost::wave::token_id id_type;
     typedef base_string_iter_t iterator_type;
     typedef boost::mpl::false_ has_state;
-    typedef base_string_t token_value_type;
+    typedef string_type token_value_type;
 
     spirit_compatible_token() {}
     spirit_compatible_token(int dummy) : base_type(dummy) {}
@@ -59,6 +63,22 @@ struct spirit_compatible_token : boost::wave::cpplexer::lex_token<PositionT>
     bool eoi() const {
         return static_cast<base_type const &>(*this).is_eoi();
     }
+
+    // Wave requirements delegated to base class
+
+    bool operator==(spirit_compatible_token const & other) const {
+        return static_cast<base_type const &>(*this) == static_cast<base_type const &>(other);
+    }
+
+    string_type const & get_value() const {
+        return static_cast<base_type const &>(*this).get_value();
+    }
+
+    bool is_valid() const {
+        return static_cast<base_type const &>(*this).is_valid();
+    }
+
+    // Spirit V2 debugging
 
 #if defined(BOOST_SPIRIT_DEBUG)
     friend std::ostream&
