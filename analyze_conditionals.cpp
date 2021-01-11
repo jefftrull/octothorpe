@@ -48,20 +48,27 @@ public:
     typedef boost::wave::token_id id_type;
     typedef base_string_iter_t iterator_type;
     typedef boost::mpl::false_ has_state;
-    typedef string_type token_value_type;
+    typedef std::pair<string_type, position_type> token_value_type;
 
     spirit_compatible_token() {}
     spirit_compatible_token(int dummy) : base_type(dummy) {}
-    spirit_compatible_token(id_type id, token_value_type value, PositionT pos)
+    spirit_compatible_token(id_type id, string_type const & value, PositionT pos)
         : base_type(id, value, pos) {}
 
     id_type id() const {
-        return static_cast<base_type const&>(*this);   // via user-defined conversion to id_type
+        // apply user-defined conversion to id_type
+        return static_cast<base_type const&>(*this);
     }
     operator id_type() const { return id(); }
 
     bool eoi() const {
         return static_cast<base_type const &>(*this).is_eoi();
+    }
+
+    // returns the Qi token value (get_value() supplies the Wave value)
+    token_value_type value() const {
+        return std::pair<string_type const &, position_type const &>(
+            get_value(), static_cast<base_type const *>(this)->get_position());
     }
 
     // Wave requirements delegated to base class
@@ -122,7 +129,10 @@ struct assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT
     static void 
     call(spirit_compatible_token<PositionT> const & tok, StringT & attr)
     {
-        attr = tok.get_value().c_str();
+        // use the Wave accessor to get the string data
+        attr = StringT(boost::begin(tok.value().first),
+                       boost::end(tok.value().first));
+
     }
 };
 template<typename PositionT, typename StringT>
@@ -130,28 +140,33 @@ struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT
     : assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
 {};
 
-
+// if the user wants position data instead
 template<typename PositionT>
-struct assign_to_attribute_from_value<boost::iterator_range<char const *>,
-                                      spirit_compatible_token<PositionT> >
+struct assign_to_attribute_from_value<PositionT, spirit_compatible_token<PositionT> >
 {
     static void
-    call(spirit_compatible_token<PositionT> const & tok,
-         boost::iterator_range<char const *> & attr)
+    call(spirit_compatible_token<PositionT> const & tok, PositionT & attr)
     {
-        attr = boost::make_iterator_range(tok.get_value().begin(), tok.get_value().end());
+        attr = tok.value().second;
     }
 };
-template<typename PositionT>
-struct assign_to_container_from_value<boost::iterator_range<char const *>,
-                                      spirit_compatible_token<PositionT> >
-    : assign_to_attribute_from_value<boost::iterator_range<char const *>,
-                                     spirit_compatible_token<PositionT> >
-{};
+// we don't support assigning positions to "containers"
 
-///////////////////////////////////////////////////////////////////////////
-// Overload debug output for a single token, this integrates lexer tokens
-// with Qi's simple_trace debug facilities
+// if the user wants both position and string value
+template<typename PositionT, typename StringT>
+struct assign_to_attribute_from_value<
+    std::pair<StringT, PositionT>, spirit_compatible_token<PositionT> >
+{
+    static void
+    call(spirit_compatible_token<PositionT> const & tok, std::pair<StringT, PositionT> & attr)
+    {
+        // delegate to existing handlers
+        assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >::call(tok, attr.first);
+        assign_to_attribute_from_value<PositionT, spirit_compatible_token<PositionT> >::call(tok, attr.second);
+    }
+};
+
+// Support debug output
 template <typename PositionT>
 struct token_printer_debug<spirit_compatible_token<PositionT> >
 {
