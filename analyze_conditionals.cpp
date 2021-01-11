@@ -9,196 +9,21 @@
  *
  */
 
+#include "qi_token.hpp"
+
 #include <iostream>
 #include <iomanip>
+#include <utility>
 
-#include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
 #include <boost/spirit/include/support_istream_iterator.hpp>
 #include <boost/fusion/include/adapt_struct.hpp>
 
-#include <boost/wave.hpp>
 #include <boost/wave/token_ids.hpp>
-#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
 
 // CVC4 SMT engine includes
 #include "cvc4/api/cvc4cpp.h"
-
-// make a Spirit V2-compatible lexer
-// analogous to boost::spirit::lex::lexertl::lexer, i.e. LefDefLexer
-
-// we need to wrap cpplexer's tokens so they can be used as Spirit V2 Lex tokens
-// compatible with qi::token
-template<typename PositionT = boost::wave::util::file_position_type>
-class spirit_compatible_token : private boost::wave::cpplexer::lex_token<PositionT>
-{
-    // pretend to be a lexertl token with one attribute: a string
-    // model: lex::lexertl::token<base_string_iter_t, mpl::vector<base_string_t>, mpl::false_>
-
-    typedef typename boost::wave::cpplexer::lex_token<PositionT> base_type;
-
-public:
-    typedef typename base_type::string_type base_string_t;
-    typedef typename base_type::string_type string_type;
-    typedef typename string_type::const_iterator base_string_iter_t;
-    typedef          PositionT position_type;
-
-    // requirements from Spirit V2
-    typedef boost::wave::token_id id_type;
-    typedef base_string_iter_t iterator_type;
-    typedef boost::mpl::false_ has_state;
-    typedef std::pair<string_type, position_type> token_value_type;
-
-    spirit_compatible_token() {}
-    spirit_compatible_token(int dummy) : base_type(dummy) {}
-    spirit_compatible_token(id_type id, string_type const & value, PositionT pos)
-        : base_type(id, value, pos) {}
-
-    id_type id() const {
-        // apply user-defined conversion to id_type
-        return static_cast<base_type const&>(*this);
-    }
-    operator id_type() const { return id(); }
-
-    bool eoi() const {
-        return static_cast<base_type const &>(*this).is_eoi();
-    }
-
-    // returns the Qi token value (get_value() supplies the Wave value)
-    token_value_type value() const {
-        return std::pair<string_type const &, position_type const &>(
-            get_value(), static_cast<base_type const *>(this)->get_position());
-    }
-
-    // Wave requirements delegated to base class
-
-    bool operator==(spirit_compatible_token const & other) const {
-        return static_cast<base_type const &>(*this) == static_cast<base_type const &>(other);
-    }
-
-    string_type const & get_value() const {
-        return static_cast<base_type const &>(*this).get_value();
-    }
-
-    bool is_valid() const {
-        return static_cast<base_type const &>(*this).is_valid();
-    }
-
-    // Spirit V2 debugging
-
-#if defined(BOOST_SPIRIT_DEBUG)
-    friend std::ostream&
-    operator<< (std::ostream &os, spirit_compatible_token<PositionT> const & tok) {
-        using namespace boost::wave;
-        auto id = token_id(tok);
-        os << get_token_name(id) << "(";
-        if (id == T_NEWLINE) {
-            os << "\\n";
-        } else {
-            os << tok.get_value();
-        }
-        os << ")" ;
-        return os;
-    }
-#endif
-};
-
-//
-// Spirit V2 helper function requirements for token (see lex/lexer/lexertl/token.hpp)
-//
-
-template <typename Position>
-inline bool
-token_is_valid(spirit_compatible_token<Position> const & t)
-{
-    return t.is_valid();
-}
-
-//
-// Spirit V2 customization points
-//
-
-namespace boost { namespace spirit { namespace traits
-{
-
-// Let Spirit know how to get data from our token into attributes
-template<typename PositionT, typename StringT>
-struct assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
-{
-    static void 
-    call(spirit_compatible_token<PositionT> const & tok, StringT & attr)
-    {
-        // use the Wave accessor to get the string data
-        attr = StringT(boost::begin(tok.value().first),
-                       boost::end(tok.value().first));
-
-    }
-};
-template<typename PositionT, typename StringT>
-struct assign_to_container_from_value<StringT, spirit_compatible_token<PositionT> >
-    : assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >
-{};
-
-// if the user wants position data instead
-template<typename PositionT>
-struct assign_to_attribute_from_value<PositionT, spirit_compatible_token<PositionT> >
-{
-    static void
-    call(spirit_compatible_token<PositionT> const & tok, PositionT & attr)
-    {
-        attr = tok.value().second;
-    }
-};
-// we don't support assigning positions to "containers"
-
-// if the user wants both position and string value
-template<typename PositionT, typename StringT>
-struct assign_to_attribute_from_value<
-    std::pair<StringT, PositionT>, spirit_compatible_token<PositionT> >
-{
-    static void
-    call(spirit_compatible_token<PositionT> const & tok, std::pair<StringT, PositionT> & attr)
-    {
-        // delegate to existing handlers
-        assign_to_attribute_from_value<StringT, spirit_compatible_token<PositionT> >::call(tok, attr.first);
-        assign_to_attribute_from_value<PositionT, spirit_compatible_token<PositionT> >::call(tok, attr.second);
-    }
-};
-
-// Support debug output
-template <typename PositionT>
-struct token_printer_debug<spirit_compatible_token<PositionT> >
-{
-    typedef spirit_compatible_token<PositionT> token_type;
-
-    template <typename Out>
-    static void print(Out& out, token_type const & val)
-    {
-        out << '[' << val << ']';
-    }
-};
-
-}}}
-
-// Adapt underlying token iterator from cpplexer (Wave) to one compatible with Spirit V2
-// requires adding a special typedef and returning Spirit-compatible tokens
-template<typename TokenT>
-struct tok_iterator : boost::wave::cpplexer::lex_iterator<TokenT>
-{
-    using base_type = boost::wave::cpplexer::lex_iterator<TokenT>;
-    using position_type = typename TokenT::position_type;
-
-    // add the typedef that qi::token requires
-    using base_iterator_type = typename TokenT::string_type::const_iterator;
-
-    // forward constructors
-    tok_iterator() {}
-    template<typename IteratorT>
-    tok_iterator(IteratorT beg, IteratorT end, position_type pos, boost::wave::language_support lang)
-        : base_type(beg, end, pos, lang) {}
-
-};
 
 // Parsing will produce text "sections": a set of lines and an associated condition
 struct text_section {
@@ -536,12 +361,12 @@ int main(int argc, char **argv) {
     boost::spirit::istream_iterator fbeg(cppfile);
 
     // Give it a try
-    using token_t = spirit_compatible_token<>;
+    using token_t = qi_token<>;
     using position_t = token_t::position_type;
     position_t pos(fn);
 
     // create Spirit V2-compatible lexer token iterators from character iterators
-    using cpplexer_iterator_t = tok_iterator<token_t>;
+    using cpplexer_iterator_t = qi_lex_iterator<token_t>;
     cpplexer_iterator_t beg(fbeg, boost::spirit::istream_iterator(), pos,
                                language_support(support_cpp|support_cpp0x));
     cpplexer_iterator_t end;
@@ -559,7 +384,7 @@ int main(int argc, char **argv) {
             return 2;
         } else if (beg != end) {
             cout << "only some input consumed. Remaining:\n";
-            copy(beg, end, ostream_iterator<spirit_compatible_token<position_t>>(cout, ""));
+            copy(beg, end, ostream_iterator<qi_token<position_t>>(cout, ""));
             return 2;
         }
         // make an assertion for the user input, if present
