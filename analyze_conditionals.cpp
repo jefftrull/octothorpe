@@ -12,6 +12,7 @@
 #include "qi_token.hpp"
 
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <utility>
 
@@ -19,6 +20,7 @@
 #include <boost/spirit/include/phoenix.hpp>
 #include <boost/spirit/include/support_istream_iterator.hpp>
 #include <boost/fusion/include/adapt_struct.hpp>
+#include <boost/fusion/include/std_pair.hpp>
 
 #include <boost/wave/token_ids.hpp>
 

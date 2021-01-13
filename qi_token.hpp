@@ -5,12 +5,12 @@
 //  Distributed under the Boost Software License, Version 1.0. (See accompanying
 //  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-
-#include <boost/wave.hpp>
-#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
-
 #include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
+
+#include <boost/wave/cpplexer/cpp_lex_iterator.hpp>
+#include <boost/wave/token_ids.hpp>
+#include <boost/wave/util/file_position.hpp>
 
 #include <utility>
 
