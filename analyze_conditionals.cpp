@@ -29,14 +29,18 @@
 
 // Parsing will produce text "sections": a set of lines and an associated condition
 struct text_section {
-    CVC4::api::Term          condition;
-    std::vector<std::string> body;
+    CVC4::api::Term                       condition;
+    std::vector<std::string>              body;
+    boost::wave::util::file_position_type start;
+    boost::wave::util::file_position_type end;
 };
 
 BOOST_FUSION_ADAPT_STRUCT(
     text_section,
     (CVC4::api::Term, condition)
     (std::vector<std::string>, body)
+    (boost::wave::util::file_position_type, start)
+    (boost::wave::util::file_position_type, end)
 )
 
 // Proper use of CVC4 requires caching variables so we don't create two with the same name
@@ -213,16 +217,38 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             dst.insert(std::end(dst), std::begin(src), std::end(src));
         };
 
-        textline = (!(token(T_PP_IF) |
-                      token(T_PP_IFDEF) |
-                      token(T_PP_IFNDEF) |
-                      token(T_PP_ELSE) |
-                      token(T_PP_ELIF) |
-                      token(T_PP_ENDIF)))
-            >> *(token - line_end)[phx::bind(append, _val, _1)]
-            >> line_end[phx::bind(append, _val, _1)] ;
-        textblock = attr(phx::construct<CVC4::api::Term>(_r1)) // conditional for a textblock is just whatever it inherited
-            >> +textline ;
+        pp_cond = token(T_PP_IF) |
+                   token(T_PP_IFDEF) |
+                   token(T_PP_IFNDEF) |
+                   token(T_PP_ELSE) |
+                   token(T_PP_ELIF) |
+                   token(T_PP_ENDIF);
+
+        non_eol = (token - line_end) ;
+
+        textline = !pp_cond >>
+            (line_end[_val = _1]                                    // empty or comment
+             | (non_eol[_val = _1]
+                // append additional tokens without changing start position
+                >> *non_eol[phx::bind(append, phx::at_c<0>(_val), phx::at_c<0>(_1))]
+                >> line_end[phx::bind(append, phx::at_c<0>(_val), phx::at_c<0>(_1))])) ;
+
+        auto next_line = [](util::file_position_type loc)
+        {
+            return util::file_position_type(loc.get_file(), loc.get_line() + 1, 1);
+        };
+
+        textblock =
+            // conditional for a textblock is just whatever it inherited
+            eps[phx::at_c<0>(_val) = phx::construct<CVC4::api::Term>(_r1)]
+            >> textline[phx::push_back(phx::at_c<1>(_val), phx::at_c<0>(_1)),
+                        // set the start position
+                        phx::at_c<2>(_val) = phx::at_c<1>(_1),
+                        // "one past the end" as is traditional:
+                        phx::at_c<3>(_val) = phx::bind(next_line, phx::at_c<1>(_1))]
+                   >> *textline[phx::push_back(phx::at_c<1>(_val), phx::at_c<0>(_1)),
+                                // update end position for new line
+                                phx::at_c<3>(_val) = phx::bind(next_line, phx::at_c<1>(_1))]  ;
 
         cond_if = token(T_PP_IF)
             >> expr_parser_[_a = _r1, _b = _1] >> line_end
@@ -296,6 +322,8 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
         BOOST_SPIRIT_DEBUG_NODE(toplvl);
         BOOST_SPIRIT_DEBUG_NODE(basic);
         BOOST_SPIRIT_DEBUG_NODE(ident);
+        BOOST_SPIRIT_DEBUG_NODE(pp_cond);
+        BOOST_SPIRIT_DEBUG_NODE(non_eol);
         BOOST_SPIRIT_DEBUG_NODE(textline);
         BOOST_SPIRIT_DEBUG_NODE(line_end);
         BOOST_SPIRIT_DEBUG_NODE(textblock);
@@ -308,8 +336,11 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident;
-    boost::spirit::qi::rule<Iterator, std::string()> line_end;
-    boost::spirit::qi::rule<Iterator, std::string()> textline;   // no skipper! Keep as-is.
+    // text rules don't use skippers; we want to keep everything:
+    boost::spirit::qi::rule<Iterator, std::pair<std::string, boost::wave::util::file_position_type>()> line_end;
+    boost::spirit::qi::rule<Iterator, boost::wave::util::file_position_type()> pp_cond;
+    boost::spirit::qi::rule<Iterator, std::pair<std::string, boost::wave::util::file_position_type>()> non_eol;
+    boost::spirit::qi::rule<Iterator, std::pair<std::string, boost::wave::util::file_position_type>()> textline;
     // a textblock is a single section of non-conditional lines
     boost::spirit::qi::rule<Iterator, text_section(CVC4::api::Term)> textblock;
 
@@ -412,7 +443,15 @@ int main(int argc, char **argv) {
 
         for (auto const & s : result) {
             if (slv.checkSatAssuming(s.condition).isUnsat()) {
-                cout << "detected a dead code section with condition ";
+                cout << "detected a dead code section in " << s.start.get_file();
+                if (s.start.get_line() == (s.end.get_line() - 1))
+                {
+                    cout << " on line " << s.start.get_line() << "\n";
+                } else {
+                    cout << " from line " << s.start.get_line();
+                    cout << " to line " << (s.end.get_line() - 1) << "\n";
+                }
+                cout << "with condition ";
                 cout << slv.simplify(s.condition) << ":\n";
                 copy(s.body.begin(), s.body.end(),
                      ostream_iterator<string>(cout, ""));
