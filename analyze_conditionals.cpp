@@ -19,7 +19,7 @@
 #include <boost/spirit/include/qi.hpp>
 #include <boost/spirit/include/phoenix.hpp>
 #include <boost/spirit/include/support_istream_iterator.hpp>
-#include <boost/fusion/include/adapt_struct.hpp>
+#include <boost/fusion/include/define_struct.hpp>
 #include <boost/fusion/include/std_pair.hpp>
 
 #include <boost/wave/token_ids.hpp>
@@ -28,14 +28,8 @@
 #include "cvc4/api/cvc4cpp.h"
 
 // Parsing will produce text "sections": a set of lines and an associated condition
-struct text_section {
-    CVC4::api::Term                       condition;
-    std::vector<std::string>              body;
-    boost::wave::util::file_position_type start;
-    boost::wave::util::file_position_type end;
-};
-
-BOOST_FUSION_ADAPT_STRUCT(
+BOOST_FUSION_DEFINE_STRUCT(
+    (),
     text_section,
     (CVC4::api::Term, condition)
     (std::vector<std::string>, body)
