@@ -79,4 +79,5 @@ add_executable( sd style_detect.cpp )
 target_link_libraries( sd Boost::wave Boost::boost )
 set_target_properties( sd PROPERTIES
    COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
+   CXX_STANDARD 17
 )

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <optional>
 
 #include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
@@ -21,6 +22,23 @@
 #include "qi_token.hpp"
 
 #include <boost/wave/token_ids.hpp>
+
+#ifdef BOOST_SPIRIT_DEBUG
+// debug support for std::optional
+namespace std {
+
+template <typename Out, typename T>
+Out& operator<<(Out& out, std::optional<T> const & val)
+{
+    if (val)
+        out << *val;
+
+    return out;
+}
+
+} // namespace std
+#endif // BOOST_SPIRIT_DEBUG
+
 
 template<typename Iterator>
 struct skipper : boost::spirit::qi::grammar<Iterator>
@@ -36,12 +54,22 @@ private:
     boost::spirit::qi::rule<Iterator> skipped;
 };
 
+// attribute for if statements
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    (),
+    if_stmt_t,
+    (Position, kwd)                       // location of "if"
+    (Position, stmt)                      // location of true branch statement
+    (std::optional<Position>, else_stmt)  // location of else clause, if present
+)
+
 // attribute for while statements
 BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
     (),
     while_stmt_t,
-    (Position, kwd)    // where we found "while" or "for"
+    (Position, kwd)    // where we found "while"
     (Position, stmt)   // where first token of action is (left brace or plain stmt)
 )
 
@@ -57,7 +85,8 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
         using qi::omit;
 
         qi::as<position_t> as_position;
-        any_token = qi::tokenid_mask(0);
+        any_token = token(~0);            // treated internally as an "all mask"
+        // did not use tokenid_mask here because it only exposes the tokenid, not the position!
 
         // thoughts
         // we need at the top level:
@@ -100,8 +129,9 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
         // the stats need to include 1) braced or not 2) newline or not 3) indentation vs. "if"
 
         if_stmt = token(T_IF) >>
-            token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN) >> stmt ;
-        // TODO handle else clause
+            omit[token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN)] >>
+            stmt >>
+            -(omit[token(T_ELSE)] >> stmt) ;
 
         while_stmt = token(T_WHILE) >>
             omit[ token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN) ] >>
@@ -134,10 +164,10 @@ private:
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > expr;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > stmt;
 
-    boost::spirit::qi::rule<Iterator, skipper<Iterator> > if_stmt;
+    boost::spirit::qi::rule<Iterator, skipper<Iterator>, if_stmt_t<position_t>() > if_stmt;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, while_stmt_t<position_t>() > while_stmt;
     boost::spirit::qi::rule<Iterator, skipper<Iterator> > for_stmt;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator> > any_token;
+    boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > any_token;
 };
 
 
