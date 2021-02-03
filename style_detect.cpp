@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iomanip>
 #include <optional>
+#include <variant>
 
 #include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
@@ -24,7 +25,7 @@
 #include <boost/wave/token_ids.hpp>
 
 #ifdef BOOST_SPIRIT_DEBUG
-// debug support for std::optional
+// debug support for std::optional and std::variant
 namespace std {
 
 template <typename Out, typename T>
@@ -33,6 +34,18 @@ Out& operator<<(Out& out, std::optional<T> const & val)
     if (val)
         out << *val;
 
+    return out;
+}
+
+template <typename Out, typename T, typename... Ts>
+Out& operator<<(Out& out, std::variant<T, Ts...> const & val)
+{
+    std::visit(
+        [&out](auto const & v)
+        {
+            out << v;
+        },
+        val);
     return out;
 }
 
@@ -82,8 +95,50 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position, stmt)   // where first token of action is (left brace or plain stmt)
 )
 
+#ifdef BOOST_SPIRIT_DEBUG
+// print helpers
+namespace std {
+
+template<typename Position>
+std::ostream &
+operator<<(std::ostream& os, if_stmt_t<Position> const & v)
+{
+    os << "IF: " << v.kwd << ", " << v.stmt;
+    if (v.else_stmt)
+        os << " ELSE: " << *v.else_stmt;
+    return os;
+}
+
+template<typename Position>
+std::ostream &
+operator<<(std::ostream& os, while_stmt_t<Position> const & v)
+{
+    os << "WHILE: " << v.kwd << ", " << v.stmt;
+    return os;
+}
+
+template<typename Position>
+std::ostream &
+operator<<(std::ostream& os, for_stmt_t<Position> const & v)
+{
+    os << "FOR: " << v.kwd << ", " << v.stmt;
+    return os;
+}
+
+}
+
+
+
+#endif // BOOST_SPIRIT_DEBUG
+
+template<typename Position>
+using stmt_structure_t = std::variant<if_stmt_t<Position>,
+                                      while_stmt_t<Position>,
+                                      for_stmt_t<Position>>;
+
 template<typename Iterator>
-struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
+struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>,
+                                               std::vector<stmt_structure_t<typename Iterator::position_type>>()>
 {
     cpp_indent() : cpp_indent::base_type(cppfile)
     {
@@ -155,7 +210,7 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
 
         // BOZO insert token consumer rule
 
-        cppfile = *(if_stmt | while_stmt | for_stmt) >> token(T_EOF);
+        cppfile = *(if_stmt | while_stmt | for_stmt) >> omit[token(T_EOF)];
 
         BOOST_SPIRIT_DEBUG_NODE(any_token);
         BOOST_SPIRIT_DEBUG_NODE(if_stmt);
@@ -168,8 +223,9 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
 
     }
 private:
-    typedef typename Iterator::position_type position_t;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator> > cppfile;
+    using position_t = typename Iterator::position_type;
+    boost::spirit::qi::rule<Iterator, skipper<Iterator>,
+                            std::vector<stmt_structure_t<position_t>>() > cppfile;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > plain_expr_tok;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > expr;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > stmt;
