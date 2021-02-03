@@ -73,3 +73,10 @@ else()
   target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost CVC4::cvc4 )
   
 endif()
+
+# Style detector example
+add_executable( sd style_detect.cpp )
+target_link_libraries( sd Boost::wave Boost::boost )
+set_target_properties( sd PROPERTIES
+   COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
+)
