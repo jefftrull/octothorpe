@@ -64,12 +64,21 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (std::optional<Position>, else_stmt)  // location of else clause, if present
 )
 
-// attribute for while statements
+// attribute for while loops
 BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
     (),
     while_stmt_t,
     (Position, kwd)    // where we found "while"
+    (Position, stmt)   // where first token of action is (left brace or plain stmt)
+)
+
+// and for for loops
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    (),
+    for_stmt_t,
+    (Position, kwd)    // where we found "for"
     (Position, stmt)   // where first token of action is (left brace or plain stmt)
 )
 
@@ -137,11 +146,12 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator> >
             omit[ token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN) ] >>
             stmt ;
 
-        for_stmt = token(T_FOR) >> token(T_LEFTPAREN)
-                                >> -expr >> token(T_SEMICOLON)
-                                >> -expr >> token(T_SEMICOLON)
-                                >> -expr >> token(T_RIGHTPAREN)
-                                >> stmt ;
+        for_stmt = token(T_FOR) >>
+            omit[token(T_LEFTPAREN) >>
+                 -expr >> token(T_SEMICOLON) >>
+                 -expr >> token(T_SEMICOLON) >>
+                 -expr >> token(T_RIGHTPAREN)] >>
+            stmt ;
 
         // BOZO insert token consumer rule
 
@@ -166,7 +176,7 @@ private:
 
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, if_stmt_t<position_t>() > if_stmt;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, while_stmt_t<position_t>() > while_stmt;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator> > for_stmt;
+    boost::spirit::qi::rule<Iterator, skipper<Iterator>, for_stmt_t<position_t>() > for_stmt;
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > any_token;
 };
 
