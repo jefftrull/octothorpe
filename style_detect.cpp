@@ -110,8 +110,10 @@ using stmt_structure_t = boost::variant<if_stmt_t<Position>,
                                         for_stmt_t<Position>>;
 
 template<typename Iterator>
-struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>,
-                                               std::vector<stmt_structure_t<typename Iterator::position_type>>()>
+using result_t = std::vector<stmt_structure_t<typename Iterator::position_type>>;
+
+template<typename Iterator>
+struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, result_t<Iterator>()>
 {
     cpp_indent() : cpp_indent::base_type(cppfile)
     {
@@ -209,6 +211,33 @@ private:
     boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > any_token;
 };
 
+struct stat_reporter : boost::static_visitor<void>
+{
+    stat_reporter()
+        : num_if_stmts(0), num_while_stmts(0), num_for_stmts(0) {}
+
+    template<typename position_t>
+    void operator()(if_stmt_t<position_t>) { ++num_if_stmts; }
+
+    template<typename position_t>
+    void operator()(while_stmt_t<position_t>) { ++num_while_stmts; }
+
+    template<typename position_t>
+    void operator()(for_stmt_t<position_t>) { ++num_for_stmts; }
+
+    void report()
+    {
+        std::cout << num_if_stmts << " if statements, ";
+        std::cout << num_while_stmts << " while loops, and ";
+        std::cout << num_for_stmts << " for loops.\n";
+    }
+
+private:
+    std::size_t num_if_stmts;
+    std::size_t num_while_stmts;
+    std::size_t num_for_stmts;
+};
+
 
 
 int main(int argc, char **argv) {
@@ -242,9 +271,10 @@ int main(int argc, char **argv) {
     cpplexer_iterator_t end;
 
     cpp_indent<decltype(beg)> fileparser;
+    result_t<decltype(beg)> result;
     auto start = beg;
     bool pass = boost::spirit::qi::phrase_parse(beg, end, fileparser,
-                                                skipper<decltype(beg)>());
+                                                skipper<decltype(beg)>(), result);
     if (pass) {
         if (beg == start) {
             cout << "no input consumed!\n";
@@ -254,11 +284,16 @@ int main(int argc, char **argv) {
             copy(beg, end, ostream_iterator<qi_token<position_t>>(cout, ""));
             return 2;
         }
-        return 0;
     } else {
         cout << "parse failed\n";
         return 1;
     }
+
+    stat_reporter rptr;
+    for (auto const & e : result)
+        boost::apply_visitor(rptr, e);
+    rptr.report();
+
 }
 
 #include <boost/wave/cpplexer/re2clex/cpp_re2c_lexer.hpp>
