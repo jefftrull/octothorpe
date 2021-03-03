@@ -11,8 +11,9 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-#include <optional>
-#include <variant>
+// this code is intended to only require C++11; if you can, use the C++17 versions instead:
+#include <boost/optional.hpp>
+#include <boost/variant.hpp>
 
 #include <boost/spirit/include/lex_plain_token.hpp>
 #include <boost/spirit/include/qi.hpp>
@@ -23,34 +24,6 @@
 #include "qi_token.hpp"
 
 #include <boost/wave/token_ids.hpp>
-
-#ifdef BOOST_SPIRIT_DEBUG
-// debug support for std::optional and std::variant
-namespace std {
-
-template <typename Out, typename T>
-Out& operator<<(Out& out, std::optional<T> const & val)
-{
-    if (val)
-        out << *val;
-
-    return out;
-}
-
-template <typename Out, typename T, typename... Ts>
-Out& operator<<(Out& out, std::variant<T, Ts...> const & val)
-{
-    std::visit(
-        [&out](auto const & v)
-        {
-            out << v;
-        },
-        val);
-    return out;
-}
-
-} // namespace std
-#endif // BOOST_SPIRIT_DEBUG
 
 
 template<typename Iterator>
@@ -72,9 +45,9 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
     (),
     if_stmt_t,
-    (Position, kwd)                       // location of "if"
-    (Position, stmt)                      // location of true branch statement
-    (std::optional<Position>, else_stmt)  // location of else clause, if present
+    (Position, kwd)                         // location of "if"
+    (Position, stmt)                        // location of true branch statement
+    (boost::optional<Position>, else_stmt)  // location of else clause, if present
 )
 
 // attribute for while loops
@@ -132,9 +105,9 @@ operator<<(std::ostream& os, for_stmt_t<Position> const & v)
 #endif // BOOST_SPIRIT_DEBUG
 
 template<typename Position>
-using stmt_structure_t = std::variant<if_stmt_t<Position>,
-                                      while_stmt_t<Position>,
-                                      for_stmt_t<Position>>;
+using stmt_structure_t = boost::variant<if_stmt_t<Position>,
+                                        while_stmt_t<Position>,
+                                        for_stmt_t<Position>>;
 
 template<typename Iterator>
 struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>,
