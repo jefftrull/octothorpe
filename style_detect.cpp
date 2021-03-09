@@ -21,6 +21,11 @@
 #include <boost/spirit/include/support_istream_iterator.hpp>
 #include <boost/fusion/include/define_struct.hpp>
 
+#ifdef BOOST_SPIRIT_DEBUG
+#include <boost/optional/optional_io.hpp>
+#include <boost/fusion/include/io.hpp>
+#endif
+
 #include "qi_token.hpp"
 
 #include <boost/wave/token_ids.hpp>
@@ -40,77 +45,133 @@ private:
     boost::spirit::qi::rule<Iterator> skipped;
 };
 
+// forward declaration of statement types, so we can use them in recursive structures
+template<typename Position>
+struct empty_stmt_t;
+
+template<typename Position>
+struct expr_stmt_t;
+
+template<typename Position>
+struct if_stmt_t;
+
+template<typename Position>
+struct else_t;                 // the else clause of an if
+
+template<typename Position>
+struct while_stmt_t;
+
+template<typename Position>
+struct for_stmt_t;
+
+// a type for "any statement" we can refer to in defining child statements
+template<typename Position>
+using simple_stmt_t = boost::variant<empty_stmt_t<Position>,
+                                     if_stmt_t<Position>,
+                                     while_stmt_t<Position>,
+                                     for_stmt_t<Position>,
+                                     expr_stmt_t<Position>>;
+
+// handle compound (braced list) statements
+template<typename Position>
+struct compound_stmt_t;
+
+template<typename Position>
+using stmt_t = boost::variant<simple_stmt_t<Position>,
+                              compound_stmt_t<Position>>;
+
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    compound_stmt_t,
+    (Position, initial_brace)
+    (std::vector<stmt_t<Position>>, statements)
+    (Position, final_brace)
+)
+
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    empty_stmt_t,
+    (Position, semi)                                    // location of the semicolon
+)
+
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    expr_stmt_t,
+    (Position, start)                                   // location of the first token
+)
+
 // attribute for if statements
 BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
-    (),
+    ,
     if_stmt_t,
-    (Position, kwd)                         // location of "if"
-    (Position, stmt)                        // location of true branch statement
-    (boost::optional<Position>, else_stmt)  // location of else clause, if present
+    (Position, kwd)                                     // location of "if"
+    (boost::recursive_wrapper<stmt_t<Position>>, stmt)  // location of true branch statement
+    (boost::optional<else_t<Position>>, else_clause)    // else clause, if present
+)
+
+// attribute for else clause of if
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    else_t,
+    (Position, kwd)                                     // location of "else"
+    (boost::recursive_wrapper<stmt_t<Position>>, stmt)  // location of statement
 )
 
 // attribute for while loops
 BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
-    (),
+    ,
     while_stmt_t,
-    (Position, kwd)    // where we found "while"
-    (Position, stmt)   // where first token of action is (left brace or plain stmt)
+    (Position, kwd)              // where we found "while"
+    (boost::recursive_wrapper<stmt_t<Position>>, stmt)
 )
 
 // and for for loops
 BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
-    (),
+    ,
     for_stmt_t,
-    (Position, kwd)    // where we found "for"
-    (Position, stmt)   // where first token of action is (left brace or plain stmt)
+    (Position, kwd)              // where we found "for"
+    (boost::recursive_wrapper<stmt_t<Position>>, stmt)
 )
 
 #ifdef BOOST_SPIRIT_DEBUG
-// print helpers
+// supply printers for special types we use
+using boost::fusion::operators::operator<<;
+
+namespace boost {
+
+template<typename Out, typename T>
+Out& operator<<(Out& out, recursive_wrapper<T> const & val)
+{
+    out << val.get();
+    return out;
+}
+
+}
+
 namespace std {
 
-template<typename Position>
-std::ostream &
-operator<<(std::ostream& os, if_stmt_t<Position> const & v)
+template<typename Out, typename T>
+Out& operator<<(Out& out, std::vector<T> const & val)
 {
-    os << "IF: " << v.kwd << ", " << v.stmt;
-    if (v.else_stmt)
-        os << " ELSE: " << *v.else_stmt;
-    return os;
-}
-
-template<typename Position>
-std::ostream &
-operator<<(std::ostream& os, while_stmt_t<Position> const & v)
-{
-    os << "WHILE: " << v.kwd << ", " << v.stmt;
-    return os;
-}
-
-template<typename Position>
-std::ostream &
-operator<<(std::ostream& os, for_stmt_t<Position> const & v)
-{
-    os << "FOR: " << v.kwd << ", " << v.stmt;
-    return os;
+    out << "[";
+    std::copy(std::begin(val), std::end(val), std::ostream_iterator<T>(cout, " "));
+    out << "]";
+    return out;
 }
 
 }
-
-
 
 #endif // BOOST_SPIRIT_DEBUG
 
-template<typename Position>
-using stmt_structure_t = boost::variant<if_stmt_t<Position>,
-                                        while_stmt_t<Position>,
-                                        for_stmt_t<Position>>;
-
 template<typename Iterator>
-using result_t = std::vector<stmt_structure_t<typename Iterator::position_type>>;
+using result_t = std::vector<stmt_t<typename Iterator::position_type>>;
 
 template<typename Iterator>
 struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, result_t<Iterator>()>
@@ -158,19 +219,15 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
              token(T_LEFTPAREN) >> -expr >> token(T_RIGHTPAREN)) |
             (plain_expr_tok[_val = _1] >> *plain_expr_tok) ;
 
-        stmt = (as_position[token(T_LEFTBRACE)][_val = _1] >> *stmt >> token(T_RIGHTBRACE)) |
-            // semicolon-terminated expression. We use the position of the first token
-            ( as_position[token(T_SEMICOLON)][_val = _1] |  // empty statement
-              (expr[_val = _1] >> *expr >> token(T_SEMICOLON) )) ;
+        empty_stmt = as_position[token(T_SEMICOLON)] ;
 
-        // so here we need to collect different stats if there's a braced expression,
-        // and if there's a newline before or after the left brace
-        // the stats need to include 1) braced or not 2) newline or not 3) indentation vs. "if"
+        expr_stmt = expr >> omit[*expr] >> token(T_SEMICOLON) ;
 
         if_stmt = token(T_IF) >>
             omit[token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN)] >>
-            stmt >>
-            -(omit[token(T_ELSE)] >> stmt) ;
+            stmt >> -else_clause ;
+
+        else_clause = token(T_ELSE) >> stmt ;
 
         while_stmt = token(T_WHILE) >>
             omit[ token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN) ] >>
@@ -183,59 +240,118 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
                  -expr >> token(T_RIGHTPAREN)] >>
             stmt ;
 
+        simple_stmt =
+            empty_stmt | if_stmt | while_stmt | for_stmt | expr_stmt ;
+
+        compound_stmt =
+            as_position[token(T_LEFTBRACE)] >> (*stmt) >> as_position[token(T_RIGHTBRACE)];
+
+        stmt = simple_stmt | compound_stmt ;
+
         // BOZO insert token consumer rule
 
-        cppfile = *(if_stmt | while_stmt | for_stmt) >> omit[token(T_EOF)];
+        cppfile = *stmt >> omit[token(T_EOF)];
 
         BOOST_SPIRIT_DEBUG_NODE(any_token);
+        BOOST_SPIRIT_DEBUG_NODE(empty_stmt);
+        BOOST_SPIRIT_DEBUG_NODE(expr_stmt);
         BOOST_SPIRIT_DEBUG_NODE(if_stmt);
+        BOOST_SPIRIT_DEBUG_NODE(else_clause);
         BOOST_SPIRIT_DEBUG_NODE(while_stmt);
         BOOST_SPIRIT_DEBUG_NODE(for_stmt);
         BOOST_SPIRIT_DEBUG_NODE(plain_expr_tok);
         BOOST_SPIRIT_DEBUG_NODE(expr);
+        BOOST_SPIRIT_DEBUG_NODE(simple_stmt);
+        BOOST_SPIRIT_DEBUG_NODE(compound_stmt);
         BOOST_SPIRIT_DEBUG_NODE(stmt);
         BOOST_SPIRIT_DEBUG_NODE(cppfile);
 
     }
 private:
     using position_t = typename Iterator::position_type;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>,
-                            std::vector<stmt_structure_t<position_t>>() > cppfile;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > plain_expr_tok;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > expr;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > stmt;
 
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, if_stmt_t<position_t>() > if_stmt;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, while_stmt_t<position_t>() > while_stmt;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, for_stmt_t<position_t>() > for_stmt;
-    boost::spirit::qi::rule<Iterator, skipper<Iterator>, position_t() > any_token;
+    template<typename Attr>
+    using rule = boost::spirit::qi::rule<Iterator, skipper<Iterator>, Attr()> ;
+
+    rule<std::vector<stmt_t<position_t>>> cppfile;
+    rule<position_t> plain_expr_tok;
+    rule<position_t> expr;
+
+    rule<simple_stmt_t<position_t>> simple_stmt;
+    rule<compound_stmt_t<position_t>> compound_stmt;
+    rule<stmt_t<position_t>> stmt;
+
+    rule<empty_stmt_t<position_t>> empty_stmt;
+    rule<if_stmt_t<position_t>> if_stmt;
+    rule<else_t<position_t>> else_clause;
+    rule<while_stmt_t<position_t>> while_stmt;
+    rule<for_stmt_t<position_t>> for_stmt;
+    rule<expr_stmt_t<position_t>> expr_stmt;
+
+    rule<position_t> any_token;
 };
 
 struct stat_reporter : boost::static_visitor<void>
 {
     stat_reporter()
-        : num_if_stmts(0), num_while_stmts(0), num_for_stmts(0) {}
+        : num_empty_stmts(0), num_if_stmts(0), num_while_stmts(0),
+          num_for_stmts(0), num_expr_stmts(0)
+    {}
 
     template<typename position_t>
-    void operator()(if_stmt_t<position_t>) { ++num_if_stmts; }
+    void operator()(empty_stmt_t<position_t> const &) { ++num_empty_stmts; }
 
     template<typename position_t>
-    void operator()(while_stmt_t<position_t>) { ++num_while_stmts; }
+    void operator()(expr_stmt_t<position_t> const &) { ++num_expr_stmts; }
 
     template<typename position_t>
-    void operator()(for_stmt_t<position_t>) { ++num_for_stmts; }
+    void operator()(if_stmt_t<position_t> const & s)
+    {
+        ++num_if_stmts;
+        boost::apply_visitor(*this, s.stmt.get());
+        if (s.else_clause)
+            boost::apply_visitor(*this, (*s.else_clause).stmt.get());
+    }
+
+    template<typename position_t>
+    void operator()(while_stmt_t<position_t> const & s)
+    {
+        ++num_while_stmts;
+        boost::apply_visitor(*this, s.stmt.get());
+    }
+
+    template<typename position_t>
+    void operator()(for_stmt_t<position_t> const & s)
+    {
+        ++num_for_stmts;
+        boost::apply_visitor(*this, s.stmt.get());
+    }
+
+    template<typename position_t>
+    void operator()(simple_stmt_t<position_t> const & s) { boost::apply_visitor(*this, s); }
+
+    template<typename position_t>
+    void operator()(compound_stmt_t<position_t> const & s)
+    {
+        for (auto const & s : s.statements)
+            boost::apply_visitor(*this, s);
+    }
 
     void report()
     {
+        std::cout << num_expr_stmts << " plain statements, ";
+        std::cout << num_empty_stmts << " empty statements, ";
         std::cout << num_if_stmts << " if statements, ";
         std::cout << num_while_stmts << " while loops, and ";
         std::cout << num_for_stmts << " for loops.\n";
     }
 
 private:
+    std::size_t num_empty_stmts;
     std::size_t num_if_stmts;
     std::size_t num_while_stmts;
     std::size_t num_for_stmts;
+    std::size_t num_expr_stmts;
 };
 
 
