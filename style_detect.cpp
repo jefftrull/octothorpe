@@ -182,9 +182,18 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         using namespace boost::spirit;
         namespace phx = boost::phoenix;
         using qi::token;
+        using qi::tokenid_mask;
         using qi::omit;
 
         qi::as<position_t> as_position;
+
+        // operators are, in token mask terms, a subset of keywords
+        kwd = tokenid_mask(KeywordTokenType) - tokenid_mask(OperatorTokenType) ;
+        type_kwd =
+            (token(T_BOOL) | token(T_INT) | token(T_CHAR) | token(T_LONG) |
+             token(T_SHORT) | token(T_UNSIGNED) | token(T_FLOAT) | token(T_DOUBLE) |
+             token(T_AUTO)) ;
+
         any_token = token(~0);            // treated internally as an "all mask"
         // did not use tokenid_mask here because it only exposes the tokenid, not the position!
 
@@ -199,11 +208,11 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         //    possibly with adjustments if it's a brace or paren? Or maybe not.
         //    also skip any spaces/newlines after it.
 
-        // an expression is a series of tokens not including semicolons,
+        // an expression is a series of tokens not including semicolons or keywords,
         // with balanced parens/braces
         // its attribute is the position of the first token
         plain_expr_tok =
-            (any_token - token(T_SEMICOLON)
+            (any_token - token(T_SEMICOLON) - kwd
              - token(T_LEFTPAREN) - token(T_LEFTBRACE)
              - token(T_RIGHTPAREN) - token(T_RIGHTBRACE)) ;
 
@@ -235,7 +244,7 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
 
         for_stmt = token(T_FOR) >>
             omit[token(T_LEFTPAREN) >>
-                 -expr >> token(T_SEMICOLON) >>
+                 -(-type_kwd >> expr) >> token(T_SEMICOLON) >>
                  -expr >> token(T_SEMICOLON) >>
                  -expr >> token(T_RIGHTPAREN)] >>
             stmt ;
@@ -272,6 +281,7 @@ private:
 
     template<typename Attr>
     using rule = boost::spirit::qi::rule<Iterator, skipper<Iterator>, Attr()> ;
+    using rule_no_attr = boost::spirit::qi::rule<Iterator, skipper<Iterator>> ;
 
     rule<std::vector<stmt_t<position_t>>> cppfile;
     rule<position_t> plain_expr_tok;
@@ -289,6 +299,9 @@ private:
     rule<expr_stmt_t<position_t>> expr_stmt;
 
     rule<position_t> any_token;
+
+    rule_no_attr kwd;
+    rule_no_attr type_kwd;
 };
 
 struct stat_reporter : boost::static_visitor<void>
