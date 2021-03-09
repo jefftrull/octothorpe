@@ -257,9 +257,9 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
 
         stmt = simple_stmt | compound_stmt ;
 
-        // BOZO insert token consumer rule
-
-        cppfile = *stmt >> omit[token(T_EOF)];
+        cppfile = *(stmt |                           // something we understood, or
+                    omit[any_token - token(T_EOF)])  // a catchall to skip one token and retry
+            >> omit[token(T_EOF)];                   // consume all input
 
         BOOST_SPIRIT_DEBUG_NODE(any_token);
         BOOST_SPIRIT_DEBUG_NODE(empty_stmt);
