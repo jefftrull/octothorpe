@@ -140,6 +140,19 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (boost::recursive_wrapper<stmt_t<Position>>, stmt)
 )
 
+// functions
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    func_t,
+    (Position, retval)
+    (Position, name)
+    (Position, lparen)
+    (std::vector<Position>, params)
+    (Position, rparen)
+    (compound_stmt_t<Position>, body)
+)
+
 #ifdef BOOST_SPIRIT_DEBUG
 // supply printers for special types we use
 using boost::fusion::operators::operator<<;
@@ -171,7 +184,7 @@ Out& operator<<(Out& out, std::vector<T> const & val)
 #endif // BOOST_SPIRIT_DEBUG
 
 template<typename Iterator>
-using result_t = std::vector<stmt_t<typename Iterator::position_type>>;
+using result_t = std::vector<func_t<typename Iterator::position_type>>;
 
 template<typename Iterator>
 struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, result_t<Iterator>()>
@@ -192,7 +205,7 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         type_kwd =
             (token(T_BOOL) | token(T_INT) | token(T_CHAR) | token(T_LONG) |
              token(T_SHORT) | token(T_UNSIGNED) | token(T_FLOAT) | token(T_DOUBLE) |
-             token(T_AUTO)) ;
+             token(T_VOID) | token(T_AUTO)) ;
 
         any_token = token(~0);            // treated internally as an "all mask"
         // did not use tokenid_mask here because it only exposes the tokenid, not the position!
@@ -207,6 +220,17 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         // 4) if we don't know what we are looking at, skip current token and try again,
         //    possibly with adjustments if it's a brace or paren? Or maybe not.
         //    also skip any spaces/newlines after it.
+
+        ident = token(T_IDENTIFIER) ;
+
+        name =
+            as_position[ident] >> *omit[ident | token(T_COLON_COLON) | token(T_TYPENAME) |
+                           token(T_LESS) | token(T_GREATER) ] ;
+
+        type_expr =
+            ( type_kwd >> *omit[type_kwd] ) |
+            name |
+            ( token(T_DECLTYPE) >> omit[token(T_LEFTPAREN) >> expr >> token(T_RIGHTPAREN)] ) ;
 
         // an expression is a series of tokens not including semicolons or keywords,
         // with balanced parens/braces
@@ -257,12 +281,22 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
 
         stmt = simple_stmt | compound_stmt ;
 
-        cppfile = *(stmt |                           // something we understood, or
+        func =
+            as_position[type_expr] >> as_position[name] >>
+            as_position[token(T_LEFTPAREN)] >>
+            -((as_position[type_expr] >> -omit[name]) % token(T_COMMA)) >>
+            as_position[token(T_RIGHTPAREN)] >>
+            compound_stmt ;
+
+
+        cppfile = *(func |                           // something we understood, or
                     omit[any_token - token(T_EOF)])  // a catchall to skip one token and retry
             >> omit[token(T_EOF)];                   // consume all input
 
         BOOST_SPIRIT_DEBUG_NODE(any_token);
+        BOOST_SPIRIT_DEBUG_NODE(name);
         BOOST_SPIRIT_DEBUG_NODE(empty_stmt);
+        BOOST_SPIRIT_DEBUG_NODE(type_expr);
         BOOST_SPIRIT_DEBUG_NODE(expr_stmt);
         BOOST_SPIRIT_DEBUG_NODE(if_stmt);
         BOOST_SPIRIT_DEBUG_NODE(else_clause);
@@ -273,6 +307,7 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         BOOST_SPIRIT_DEBUG_NODE(simple_stmt);
         BOOST_SPIRIT_DEBUG_NODE(compound_stmt);
         BOOST_SPIRIT_DEBUG_NODE(stmt);
+        BOOST_SPIRIT_DEBUG_NODE(func);
         BOOST_SPIRIT_DEBUG_NODE(cppfile);
 
     }
@@ -281,11 +316,19 @@ private:
 
     template<typename Attr>
     using rule = boost::spirit::qi::rule<Iterator, skipper<Iterator>, Attr()> ;
+    template<typename Attr>
+    using rule_no_skipper = boost::spirit::qi::rule<Iterator, Attr()> ;
     using rule_no_attr = boost::spirit::qi::rule<Iterator, skipper<Iterator>> ;
 
-    rule<std::vector<stmt_t<position_t>>> cppfile;
+    rule<std::vector<func_t<position_t>>> cppfile;
+
+    rule<position_t> any_token;
     rule<position_t> plain_expr_tok;
     rule<position_t> expr;
+    rule<position_t> type_kwd;
+    rule<position_t> type_expr;
+    rule_no_skipper<position_t> ident;
+    rule_no_skipper<position_t> name;
 
     rule<simple_stmt_t<position_t>> simple_stmt;
     rule<compound_stmt_t<position_t>> compound_stmt;
@@ -298,10 +341,9 @@ private:
     rule<for_stmt_t<position_t>> for_stmt;
     rule<expr_stmt_t<position_t>> expr_stmt;
 
-    rule<position_t> any_token;
+    rule<func_t<position_t>> func;
 
     rule_no_attr kwd;
-    rule_no_attr type_kwd;
 };
 
 struct stat_reporter : boost::static_visitor<void>
@@ -419,8 +461,10 @@ int main(int argc, char **argv) {
     }
 
     stat_reporter rptr;
-    for (auto const & e : result)
-        boost::apply_visitor(rptr, e);
+    std::cout << result.size() << " functions, containing:\n";
+    for (auto const & f : result)
+        for (auto const & s : f.body.statements)
+            boost::apply_visitor(rptr, s);
     rptr.report();
 
 }
