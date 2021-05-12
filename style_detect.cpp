@@ -260,10 +260,6 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
              - token(T_LEFTPAREN) - token(T_LEFTBRACE)
              - token(T_RIGHTPAREN) - token(T_RIGHTBRACE)) ;
 
-        // TODO: remove as_position from as many points as possible
-        // tokens are compatible with positions already - using "omit"
-        // on the unneeded parts may be a cleaner approach
-
         expr =
             (as_position[token(T_LEFTPAREN)][_val = _1] >> expr >> token(T_RIGHTPAREN)) |
             (as_position[token(T_LEFTBRACE)][_val = _1] >> expr >> token(T_RIGHTBRACE)) |
@@ -297,15 +293,15 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
             empty_stmt | if_stmt | while_stmt | for_stmt | expr_stmt ;
 
         compound_stmt =
-            as_position[token(T_LEFTBRACE)] >> (*stmt) >> as_position[token(T_RIGHTBRACE)];
+            token(T_LEFTBRACE) >> (*stmt) >> token(T_RIGHTBRACE);
 
         stmt = simple_stmt | compound_stmt ;
 
         func =
             as_position[type_expr] >> as_position[name] >>
-            as_position[token(T_LEFTPAREN)] >>
+            token(T_LEFTPAREN) >>
             -((as_position[type_expr] >> -omit[name]) % token(T_COMMA)) >>
-            as_position[token(T_RIGHTPAREN)] >>
+            token(T_RIGHTPAREN) >>
             compound_stmt ;
 
         ns =
