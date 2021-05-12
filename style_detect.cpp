@@ -153,6 +153,23 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (compound_stmt_t<Position>, body)
 )
 
+// namespaces: contain functions and other namespaces
+template<typename Position> struct ns_t;
+// create an alias to get around multiple comma issue in Fusion (due to macros)
+template<typename Position>
+using ns_var_t = boost::variant<func_t<Position>, ns_t<Position>>;
+
+BOOST_FUSION_DEFINE_TPL_STRUCT(
+    (Position),
+    ,
+    ns_t,
+    (Position, ns)
+    (boost::optional<Position>, name)
+    (Position, lbrace)
+    (std::vector<ns_var_t<Position> >, contents)   // use our alias here
+    (Position, rbrace)
+)
+
 #ifdef BOOST_SPIRIT_DEBUG
 // supply printers for special types we use
 using boost::fusion::operators::operator<<;
@@ -184,7 +201,10 @@ Out& operator<<(Out& out, std::vector<T> const & val)
 #endif // BOOST_SPIRIT_DEBUG
 
 template<typename Iterator>
-using result_t = std::vector<func_t<typename Iterator::position_type>>;
+using result_t =
+    std::vector<
+        boost::variant<func_t<typename Iterator::position_type>,
+                       ns_t<typename Iterator::position_type>>>;
 
 template<typename Iterator>
 struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, result_t<Iterator>()>
@@ -288,8 +308,12 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
             as_position[token(T_RIGHTPAREN)] >>
             compound_stmt ;
 
+        ns =
+            token(T_NAMESPACE) >> -token(T_IDENTIFIER) >> token(T_LEFTBRACE) >>
+            *(func | ns) >>
+            token(T_RIGHTBRACE) ;
 
-        cppfile = *(func |                           // something we understood, or
+        cppfile = *(ns | func |                      // something we understood, or
                     omit[any_token - token(T_EOF)])  // a catchall to skip one token and retry
             >> omit[token(T_EOF)];                   // consume all input
 
@@ -308,6 +332,7 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         BOOST_SPIRIT_DEBUG_NODE(compound_stmt);
         BOOST_SPIRIT_DEBUG_NODE(stmt);
         BOOST_SPIRIT_DEBUG_NODE(func);
+        BOOST_SPIRIT_DEBUG_NODE(ns);
         BOOST_SPIRIT_DEBUG_NODE(cppfile);
 
     }
@@ -320,7 +345,9 @@ private:
     using rule_no_skipper = boost::spirit::qi::rule<Iterator, Attr()> ;
     using rule_no_attr = boost::spirit::qi::rule<Iterator, skipper<Iterator>> ;
 
-    rule<std::vector<func_t<position_t>>> cppfile;
+    rule<std::vector<boost::variant<func_t<position_t>, ns_t<position_t>>>> cppfile;
+
+    rule<ns_t<position_t>> ns;
 
     rule<position_t> any_token;
     rule<position_t> plain_expr_tok;
@@ -349,8 +376,8 @@ private:
 struct stat_reporter : boost::static_visitor<void>
 {
     stat_reporter()
-        : num_empty_stmts(0), num_if_stmts(0), num_while_stmts(0),
-          num_for_stmts(0), num_expr_stmts(0)
+        : num_ns(0), num_funcs(0), num_empty_stmts(0),
+          num_if_stmts(0), num_while_stmts(0), num_for_stmts(0), num_expr_stmts(0)
     {}
 
     template<typename position_t>
@@ -392,8 +419,28 @@ struct stat_reporter : boost::static_visitor<void>
             boost::apply_visitor(*this, s);
     }
 
+    // function
+    template<typename position_t>
+    void operator()(func_t<position_t> const & f)
+    {
+        ++num_funcs;
+        for (auto const & s : f.body.statements)
+            boost::apply_visitor(*this, s);
+    }
+
+    // namespace - a collection of functions and namespaces
+    template<typename position_t>
+    void operator()(ns_t<position_t> const & ns)
+    {
+        ++num_ns;
+        for (auto const & f_or_ns : ns.contents)
+            boost::apply_visitor(*this, f_or_ns);
+    }
+
     void report()
     {
+        std::cout << num_ns << " namespaces and ";
+        std::cout << num_funcs << " functions, containing ";
         std::cout << num_expr_stmts << " plain statements, ";
         std::cout << num_empty_stmts << " empty statements, ";
         std::cout << num_if_stmts << " if statements, ";
@@ -402,6 +449,8 @@ struct stat_reporter : boost::static_visitor<void>
     }
 
 private:
+    std::size_t num_ns;
+    std::size_t num_funcs;
     std::size_t num_empty_stmts;
     std::size_t num_if_stmts;
     std::size_t num_while_stmts;
@@ -461,10 +510,9 @@ int main(int argc, char **argv) {
     }
 
     stat_reporter rptr;
-    std::cout << result.size() << " functions, containing:\n";
-    for (auto const & f : result)
-        for (auto const & s : f.body.statements)
-            boost::apply_visitor(rptr, s);
+    for (auto const & r : result)
+        boost::apply_visitor(rptr, r);
+    std::cout << result.size() << " top-level functions or namespaces, containing:\n";
     rptr.report();
 
 }
