@@ -145,6 +145,7 @@ BOOST_FUSION_DEFINE_TPL_STRUCT(
     (Position),
     ,
     func_t,
+    (boost::optional<Position>, tmpl_expr)
     (Position, retval)
     (Position, name)
     (Position, lparen)
@@ -222,10 +223,12 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
 
         // operators are, in token mask terms, a subset of keywords
         kwd = tokenid_mask(KeywordTokenType) - tokenid_mask(OperatorTokenType) ;
+        integral_type_kwd =
+            token(T_BOOL) | token(T_INT) | token(T_CHAR) | token(T_LONG) |
+            token(T_SHORT) | token(T_UNSIGNED) ;
         type_kwd =
-            (token(T_BOOL) | token(T_INT) | token(T_CHAR) | token(T_LONG) |
-             token(T_SHORT) | token(T_UNSIGNED) | token(T_FLOAT) | token(T_DOUBLE) |
-             token(T_VOID) | token(T_AUTO)) ;
+            integral_type_kwd |
+            token(T_FLOAT) | token(T_DOUBLE) | token(T_VOID) | token(T_AUTO) ;
 
         any_token = token(~0);            // treated internally as an "all mask"
         // did not use tokenid_mask here because it only exposes the tokenid, not the position!
@@ -298,6 +301,12 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
         stmt = simple_stmt | compound_stmt ;
 
         func =
+            -(token(T_TEMPLATE) >>
+              omit[(token(T_LESS) >>
+                    (((token(T_TYPENAME) | token(T_CLASS)) >> ident) |  // type
+                     (integral_type_kwd >> ident))                      // integral constant
+                    % token(T_COMMA)) >>
+                   token(T_GREATER)]) >>
             as_position[type_expr] >> as_position[name] >>
             token(T_LEFTPAREN) >>
             -((as_position[type_expr] >> -omit[name]) % token(T_COMMA)) >>
@@ -349,6 +358,7 @@ private:
     rule<position_t> plain_expr_tok;
     rule<position_t> expr;
     rule<position_t> type_kwd;
+    rule<position_t> integral_type_kwd;
     rule<position_t> type_expr;
     rule_no_skipper<position_t> ident;
     rule_no_skipper<position_t> name;
