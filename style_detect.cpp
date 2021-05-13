@@ -315,7 +315,10 @@ struct cpp_indent : boost::spirit::qi::grammar<Iterator, skipper<Iterator>, resu
 
         ns =
             token(T_NAMESPACE) >> -token(T_IDENTIFIER) >> token(T_LEFTBRACE) >>
-            *(func | ns) >>
+            // within namespaces we expect functions and other namespaces
+            *(func | ns |
+              // but also, if we get confused we will skip a token and retry
+              omit[any_token - token(T_RIGHTBRACE)]) >>
             token(T_RIGHTBRACE) ;
 
         cppfile = *(ns | func |                      // something we understood, or
