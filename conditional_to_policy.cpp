@@ -12,7 +12,7 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
-#include <experimental/optional>
+#include <optional>
 
 #include "clang/AST/AST.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
@@ -84,7 +84,7 @@ struct PPActions : clang::PPCallbacks
             auto tok_end = clang::Lexer::getLocForEndOfToken(tok.getLocation(),
                                                              0, sm_, lopt_);
             cond_starts_.emplace(loc, std::make_pair(true, tok_end));
-            else_loc_ = std::experimental::nullopt;
+            else_loc_ = std::nullopt;
         }
     }
 
@@ -95,7 +95,7 @@ struct PPActions : clang::PPCallbacks
             auto tok_end = clang::Lexer::getLocForEndOfToken(tok.getLocation(),
                                                              0, sm_, lopt_);
             cond_starts_.emplace(loc, std::make_pair(false, tok_end));
-            else_loc_ = std::experimental::nullopt;
+            else_loc_ = std::nullopt;
         }
     }
 
@@ -164,7 +164,7 @@ private:
                  clang::SourceLocation> > // where the if ends (last char of macro name)
         cond_starts_;
 
-    std::experimental::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
+    std::optional<clang::SourceLocation> else_loc_;    // most recent "else", if any
     std::vector<clang::SourceRange>& source_ranges_;
     std::vector<clang::SourceRange>& source_ranges_pp_;
 
@@ -247,7 +247,7 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
     SourceFileHooks(std::string mname,
                     std::vector<clang::SourceRange>& source_ranges,
                     std::vector<clang::SourceRange>& source_ranges_pp,
-                    std::vector<std::experimental::optional<CondRegion>>& cond_regions,
+                    std::vector<std::optional<CondRegion>>& cond_regions,
                     RangeNodes<clang::Decl> const& decls,
                     RangeNodes<clang::Stmt> const& stmts,
                     std::vector<std::vector<std::string>>& type_names,
@@ -367,7 +367,7 @@ struct SourceFileHooks : clang::tooling::SourceFileCallbacks
 private:
     std::string mname_;
     std::vector<clang::SourceRange>& source_ranges_, source_ranges_pp_;
-    std::vector<std::experimental::optional<CondRegion>>& cond_regions_;
+    std::vector<std::optional<CondRegion>>& cond_regions_;
     clang::CompilerInstance* ci_;
     RangeNodes<clang::Decl> const & decls_;
     RangeNodes<clang::Stmt> const & stmts_;
@@ -558,7 +558,7 @@ template<bool Sense>
 int FindConditionalNodes(std::string                                           mname,
                          std::string                                           fileName,
                          // result storage
-                         std::vector<std::experimental::optional<CondRegion>>& cond_regions,
+                         std::vector<std::optional<CondRegion>>& cond_regions,
                          std::vector<std::set<std::string>>&                   typedefs,
                          std::vector<RegionStatementProperties>&               stmt_props,
                          clang::tooling::Replacements&                         replacements,
@@ -652,7 +652,7 @@ private:
 };
 
 // Edit text to surround conditional regions containing statements with a lambda capture
-using cond_region_list_t = std::vector<std::experimental::optional<CondRegion>>;
+using cond_region_list_t = std::vector<std::optional<CondRegion>>;
 std::string
 annotate_conditionals_with_lambdas(std::string const& body,
                                    std::vector<RegionStatementProperties> const& stmt_props,
