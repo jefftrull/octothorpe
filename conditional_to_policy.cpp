@@ -29,7 +29,7 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Rewrite/Core/Rewriter.h"
 
-#include <boost/function_output_iterator.hpp>
+#include <boost/iterator/function_output_iterator.hpp>
 
 std::string get_source_range(clang::SourceManager const* sm,
                              clang::LangOptions lopt, clang::SourceRange range) {
