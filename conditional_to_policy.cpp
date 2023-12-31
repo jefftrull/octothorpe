@@ -869,7 +869,7 @@ int main(int argc, char const **argv) {
 
     // finally add the class definition, specialization, and using statements
     if (replacements.add(
-            tooling::Replacement(argv[2], 0, 0, preamble))) {
+            tooling::Replacement(clang::tooling::getAbsolutePath(argv[2]), 0, 0, preamble))) {
         throw std::logic_error("failed to insert preamble as a Replacement");
     }
 
