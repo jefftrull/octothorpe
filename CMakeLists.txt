@@ -8,7 +8,7 @@
 # 
 #
 
-cmake_minimum_required( VERSION 3.12 )
+cmake_minimum_required( VERSION 3.28 )
 
 project( Octothorpe )
 
@@ -18,21 +18,8 @@ set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
 # We will pick up LLVM via the somewhat more modern "Config" route
 # so set CMAKE_PREFIX_PATH accordingly
 
-find_package( Clang )
-
-include_directories( SYSTEM ${CLANG_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS} )
-
-
-# libs.  TODO: can I get llvm-config to list these for me somehow? Is there a consolidated lib?
-set( CLANG_AST_LIBS
-        -Wl,--start-group
-	clangAST
-	clangASTMatchers
-	clangTooling
-        -Wl,--end-group
-        ${LLVM_LIBS}
-        ${LLVM_SYSLIBS}
-)
+find_package( Clang REQUIRED CONFIG )
+find_package( LLVM REQUIRED CONFIG )
 
 set( Boost_USE_STATIC_LIBS ON )
 find_package( Boost 1.60 REQUIRED COMPONENTS system wave thread filesystem )
@@ -53,9 +40,9 @@ add_executable( c2p conditional_to_policy.cpp )
 # Note Clang is normally compiled without exceptions or RTTI... tread carefully
 set_target_properties( c2p PROPERTIES
   COMPILE_FLAGS "${LLVM_CXXFLAGS} -fexceptions -fno-rtti" # LLVM doesn't like RTTI
-  LINK_FLAGS "${LLVM_LDFLAGS}"
-  LINK_LIBRARIES "${CLANG_AST_LIBS}"
 )
+target_link_libraries( c2p clangAST clangASTMatchers clangTooling )
+target_include_directories( c2p SYSTEM PRIVATE ${CLANG_INCLUDE_DIRS} )
 
 # Conditional compilation analysis of whole text example, using Boost.Wave and SMT 
 # Requires CVC5. User must ensure CVC5Config.cmake is in the CMAKE_PREFIX_PATH.
