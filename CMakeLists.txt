@@ -58,19 +58,19 @@ set_target_properties( c2p PROPERTIES
 )
 
 # Conditional compilation analysis of whole text example, using Boost.Wave and SMT 
-# Requires CVC4. User must ensure CVC4Config.cmake is in the CMAKE_PREFIX_PATH.
+# Requires CVC5. User must ensure CVC5Config.cmake is in the CMAKE_PREFIX_PATH.
 
-find_package( CVC4 )
+find_package( cvc5 )
 
-if( "${CVC4_FOUND}" STREQUAL "" )
-  message( WARNING "No value provided for CVC4_ROOT; the deadc0de executable will not be built" )
+if( "${cvc5_FOUND}" STREQUAL "" )
+  message( WARNING "No value provided for CVC5_ROOT; the deadc0de executable will not be built" )
 else()
 
   add_executable( deadc0de analyze_conditionals.cpp )
 #  set_target_properties( deadc0de PROPERTIES
 #    COMPILE_DEFINITIONS BOOST_SPIRIT_DEBUG # Uncomment in case of emergency
 #  )
-  target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost CVC4::cvc4 )
+  target_link_libraries( deadc0de Boost::system Boost::wave Boost::boost cvc5::cvc5 )
   
 endif()
 

@@ -24,50 +24,50 @@
 
 #include <boost/wave/token_ids.hpp>
 
-// CVC4 SMT engine includes
-#include "cvc4/api/cvc4cpp.h"
+// CVC5 SMT engine includes
+#include <cvc5/cvc5.h>
 
 // Parsing will produce text "sections": a set of lines and an associated condition
 BOOST_FUSION_DEFINE_STRUCT(
     (),
     text_section,
-    (CVC4::api::Term, condition)
+    (cvc5::Term, condition)
     (std::vector<std::string>, body)
     (boost::wave::util::file_position_type, start)
     (boost::wave::util::file_position_type, end)
 )
 
-// Proper use of CVC4 requires caching variables so we don't create two with the same name
+// Proper use of cvc5 requires caching variables so we don't create two with the same name
 struct var_cache {
-    var_cache(CVC4::api::Solver& slv) : slv_(slv) {}
+    var_cache(cvc5::Solver& slv) : slv_(slv) {}
 
-    CVC4::api::Term   get_defined_expr(std::string varname) {
+    cvc5::Term   get_defined_expr(std::string varname) {
         // see if we have cached this variable representing defined(varname)
         auto it = defined_vars_.find(varname);
         if (it != defined_vars_.end()) {
             return it->second;
         }
         // give it a different name than the integer variable representing its value
-        CVC4::api::Term var = slv_.mkConst(slv_.getBooleanSort(), varname + "_defined");
+        cvc5::Term var = slv_.mkConst(slv_.getBooleanSort(), varname + "_defined");
         defined_vars_.emplace(varname, var);
         return var;
     }
 
     // for building integer expressions
-    CVC4::api::Term   get_integer_var(std::string varname) {
+    cvc5::Term   get_integer_var(std::string varname) {
         // check in cache first
         auto it = int_vars_.find(varname);
         if (it != int_vars_.end()) {
             return it->second;
         }
-        CVC4::api::Term var = slv_.mkConst(slv_.getIntegerSort(), varname);
+        cvc5::Term var = slv_.mkConst(slv_.getIntegerSort(), varname);
         int_vars_.emplace(varname, var);
         return var;
     }
 private:
-    CVC4::api::Solver& slv_;
-    std::map<std::string, CVC4::api::Term> int_vars_;
-    std::map<std::string, CVC4::api::Term> defined_vars_;
+    cvc5::Solver& slv_;
+    std::map<std::string, cvc5::Term> int_vars_;
+    std::map<std::string, cvc5::Term> defined_vars_;
 };
 
 // Define a simple grammar using our adapted token iterator
@@ -82,9 +82,9 @@ private:
 };
 
 template<typename Iterator>
-struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::api::Term(), skipper<Iterator>>
+struct cond_expr : boost::spirit::qi::grammar<Iterator, cvc5::Term(), skipper<Iterator>>
 {
-    cond_expr(CVC4::api::Solver& slv, var_cache& vars)
+    cond_expr(cvc5::Solver& slv, var_cache& vars)
         : cond_expr::base_type(bool_expr), slv_(slv), vars_(vars) {
         using boost::spirit::_1;
         using boost::spirit::_3;
@@ -118,11 +118,11 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::api::Term(), skipp
         conj_term = bool_term [ _val = _1 ]
             >> *(token(T_ANDAND) >> bool_term [
                      _val = phx::bind(&cond_expr::create_binary_expr,
-                                      this, CVC4::api::AND, _val, _1)]) ;
+                                      this, cvc5::Kind::AND, _val, _1)]) ;
         disj_term = conj_term [ _val = _1 ]
             >> *(token(T_OROR) >> conj_term [
                      _val = phx::bind(&cond_expr::create_binary_expr,
-                                      this, CVC4::api::OR, _val, _1)]) ;
+                                      this, cvc5::Kind::OR, _val, _1)]) ;
 
         // parsing a subset of real expressions here, for now
         // we only compare ints, never compute with them
@@ -135,19 +135,19 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::api::Term(), skipp
         int_comp =
             (int_term >> token(T_EQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::api::EQUAL, _1, _3) ]
+                                 this, cvc5::Kind::EQUAL, _1, _3) ]
           | (int_term >> token(T_LESS) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::api::LT, _1, _3) ]
+                                 this, cvc5::Kind::LT, _1, _3) ]
           | (int_term >> token(T_GREATER) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::api::GT, _1, _3) ]
+                                 this, cvc5::Kind::GT, _1, _3) ]
           | (int_term >> token(T_LESSEQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::api::LEQ, _1, _3) ]
+                                 this, cvc5::Kind::LEQ, _1, _3) ]
           | (int_term >> token(T_GREATEREQUAL) >> int_term) [
                 _val = phx::bind(&cond_expr::create_binary_expr,
-                                 this, CVC4::api::GEQ, _1, _3) ] ;
+                                 this, cvc5::Kind::GEQ, _1, _3) ] ;
 
         bool_expr = int_comp | disj_term ;
 
@@ -165,21 +165,21 @@ struct cond_expr : boost::spirit::qi::grammar<Iterator, CVC4::api::Term(), skipp
 
 private:
     boost::spirit::qi::rule<Iterator, std::string()> ident, int_;
-    using expr_rule_t = boost::spirit::qi::rule<Iterator, CVC4::api::Term(), skipper<Iterator>>;
+    using expr_rule_t = boost::spirit::qi::rule<Iterator, cvc5::Term(), skipper<Iterator>>;
     expr_rule_t defined, cond_inv, bool_term, conj_term, disj_term, int_term, int_comp, paren_term, bool_expr;
 
     // for building logical expressions
-    CVC4::api::Solver& slv_;
+    cvc5::Solver& slv_;
     var_cache&         vars_;
 
-    CVC4::api::Term   create_inverted_expr(CVC4::api::Term e) {
+    cvc5::Term   create_inverted_expr(cvc5::Term e) {
         return e.notTerm();
     }
-    CVC4::api::Term   create_binary_expr(CVC4::api::Kind op, CVC4::api::Term e1, CVC4::api::Term e2) {
-        return slv_.mkTerm(op, e1, e2);
+    cvc5::Term   create_binary_expr(cvc5::Kind op, cvc5::Term e1, cvc5::Term e2) {
+        return slv_.mkTerm(op, {std::move(e1), std::move(e2)});
     }
-    CVC4::api::Term   create_integer_const(std::string int_literal) {
-        return slv_.mkReal(int_literal);  // mkReal encompasses float, integer, and rational
+    cvc5::Term   create_integer_const(std::string int_literal) {
+        return slv_.mkInteger(int_literal);
     }
 };
 
@@ -189,7 +189,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                                                  std::vector<text_section>(),
                                                  skipper<Iterator>>
 {
-    cond_grammar(CVC4::api::Solver& slv, var_cache& vars)
+    cond_grammar(cvc5::Solver& slv, var_cache& vars)
         : cond_grammar::base_type(tunit), slv_(slv), vars_(vars), expr_parser_(slv, vars_) {
         using boost::spirit::_1;
         using boost::spirit::_a;
@@ -234,7 +234,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
 
         textblock =
             // conditional for a textblock is just whatever it inherited
-            eps[phx::at_c<0>(_val) = phx::construct<CVC4::api::Term>(_r1)]
+            eps[phx::at_c<0>(_val) = phx::construct<cvc5::Term>(_r1)]
             >> textline[phx::push_back(phx::at_c<1>(_val), phx::at_c<0>(_1)),
                         // set the start position
                         phx::at_c<2>(_val) = phx::at_c<1>(_1),
@@ -248,7 +248,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >> expr_parser_[_a = _r1, _b = _1] >> line_end
             // both the inherited condition and the new one must be true:
             >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                   this, CVC4::api::AND, _a, _b))[
+                                   this, cvc5::Kind::AND, _a, _b))[
                         phx::bind(append, _val, _1)
                    ]
             // update "condition so far"
@@ -259,7 +259,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
             >>    *(token(T_PP_ELIF)
                     >> expr_parser_[_b = _1] >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::api::AND, _a, _b))[
+                                        this, cvc5::Kind::AND, _a, _b))[
                             phx::bind(append, _val, _1)
                    ]
                     >> eps[
@@ -279,7 +279,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                   ]
               >>  line_end
               >>    *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                     this, CVC4::api::AND, _r1, _a))[
+                                     this, cvc5::Kind::AND, _r1, _a))[
                         phx::bind(append, _val, _1)
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
@@ -300,7 +300,7 @@ struct cond_grammar : boost::spirit::qi::grammar<Iterator,
                     ]
             >>    -(token(T_PP_ELSE) >> line_end
                     >> *basic(phx::bind(&cond_grammar::create_binary_expr,
-                                        this, CVC4::api::AND, _r1, _a))[
+                                        this, cvc5::Kind::AND, _r1, _a))[
                             phx::bind(append, _val, _1)
                         ])
             >>    token(T_PP_ENDIF) >> line_end ;
@@ -336,35 +336,35 @@ private:
     boost::spirit::qi::rule<Iterator, std::pair<std::string, boost::wave::util::file_position_type>()> non_eol;
     boost::spirit::qi::rule<Iterator, std::pair<std::string, boost::wave::util::file_position_type>()> textline;
     // a textblock is a single section of non-conditional lines
-    boost::spirit::qi::rule<Iterator, text_section(CVC4::api::Term)> textblock;
+    boost::spirit::qi::rule<Iterator, text_section(cvc5::Term)> textblock;
 
     boost::spirit::qi::rule<Iterator, std::vector<text_section>(), skipper<Iterator>> tunit, toplvl;
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>>
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(cvc5::Term), skipper<Iterator>>
         basic;
 
     // cond_ifdef/cond_ifndef need an attribute for remembering the macro name
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>,
-                            boost::spirit::locals<CVC4::api::Term>> cond_ifdef, cond_ifndef;
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(cvc5::Term), skipper<Iterator>,
+                            boost::spirit::locals<cvc5::Term>> cond_ifdef, cond_ifndef;
 
     // cond_if needs a local attribute for remembering conditions, and one for
     // accumulating conditions from elif's
-    boost::spirit::qi::rule<Iterator, std::vector<text_section>(CVC4::api::Term), skipper<Iterator>,
-                            boost::spirit::locals<CVC4::api::Term, CVC4::api::Term>> cond_if;
+    boost::spirit::qi::rule<Iterator, std::vector<text_section>(cvc5::Term), skipper<Iterator>,
+                            boost::spirit::locals<cvc5::Term, cvc5::Term>> cond_if;
 
     // for building logical expressions
-    CVC4::api::Solver&  slv_;
+    cvc5::Solver&  slv_;
     var_cache&          vars_;
     cond_expr<Iterator> expr_parser_;
 
-    CVC4::api::Term   create_binary_expr(CVC4::api::Kind op, CVC4::api::Term e1, CVC4::api::Term e2) {
-        return slv_.mkTerm(op, e1, e2);
+    cvc5::Term   create_binary_expr(cvc5::Kind op, cvc5::Term e1, cvc5::Term e2) {
+        return slv_.mkTerm(op, {std::move(e1), std::move(e2)});
     }
     // e1 && !e2
     // useful for "else" clauses
-    CVC4::api::Term   create_inv_qual_expr(CVC4::api::Term e1, CVC4::api::Term e2) {
+    cvc5::Term   create_inv_qual_expr(cvc5::Term e1, cvc5::Term e2) {
         return e1.andTerm(e2.notTerm());
     }
-    CVC4::api::Term   create_boolean_const(bool b) {
+    cvc5::Term   create_boolean_const(bool b) {
         return slv_.mkBoolean(b);
     }
 };
@@ -398,7 +398,7 @@ int main(int argc, char **argv) {
                                language_support(support_cpp|support_cpp0x));
     cpplexer_iterator_t end;
 
-    CVC4::api::Solver slv;
+    cvc5::Solver slv;
     var_cache         vars(slv);     // global so we can share with user expression parser
     cond_grammar<decltype(beg)> fileparser(slv, vars);
     vector<text_section> result;
@@ -424,7 +424,7 @@ int main(int argc, char **argv) {
             cpplexer_iterator_t eend;
 
             cond_expr<decltype(ebeg)> exprparser(slv, vars);
-            CVC4::api::Term user_expr;
+            cvc5::Term user_expr;
             pass = boost::spirit::qi::phrase_parse(ebeg, eend, exprparser,
                                                    skipper<decltype(ebeg)>(), user_expr);
             if (!pass)
